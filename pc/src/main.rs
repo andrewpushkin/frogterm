@@ -1,12 +1,14 @@
 //! PC tools for the reTerminal photo + weather frame.
 //!
 //!   frogterm-pc check [<album-link>]   verify the Google Photos album works without login
-//!   frogterm-pc emulator               run one device update and save the screen as PNG
+//!   frogterm-pc emulator               the device in a window: the firmware's logic, three clickable buttons
 
 mod check;
 mod config;
 mod emulator;
+mod logger;
 mod net;
+mod window;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
