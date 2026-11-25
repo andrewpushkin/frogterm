@@ -4,6 +4,7 @@
 pub mod album;
 pub mod battery;
 pub mod beep;
+pub mod buttons;
 pub mod calendar;
 pub mod date;
 pub mod dither;
