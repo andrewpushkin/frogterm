@@ -30,7 +30,19 @@ pub struct HourSlot {
     pub precip_pct: u8,
     /// UV index (0 at night).
     pub uv: f32,
+    /// Daylight at this hour (else the icon shows the moon instead of the sun).
+    pub is_day: bool,
+    /// Moon phase at this hour (0 new, 0.5 full).
+    pub moon: f32,
     pub icon: Icon,
+}
+
+/// Sunrise and sunset of one day (local times).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SunDay {
+    pub date: crate::date::Date,
+    pub rise: (u8, u8),
+    pub set: (u8, u8),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,9 +55,15 @@ pub struct Forecast {
     pub start_unix: i64,
     /// Consecutive hours from `start_unix`.
     pub slots: Vec<HourSlot>,
+    /// Sunrise/sunset of the next days.
+    pub sun: Vec<SunDay>,
 }
 
 impl Forecast {
+    pub fn sun_on(&self, date: crate::date::Date) -> Option<&SunDay> {
+        self.sun.iter().find(|s| s.date == date)
+    }
+
     /// The `SLOTS` hours starting with the hour that contains `now`, or `None`
     /// if the stored forecast does not reach that far.
     pub fn window(&self, now: i64) -> Option<&[HourSlot]> {
@@ -65,7 +83,8 @@ pub struct Place {
 pub fn forecast_url(latitude: f64, longitude: f64) -> String {
     format!(
         "https://api.open-meteo.com/v1/forecast?latitude={latitude:.4}&longitude={longitude:.4}\
-         &hourly=temperature_2m,precipitation_probability,weather_code,uv_index\
+         &hourly=temperature_2m,precipitation_probability,weather_code,uv_index,is_day\
+         &daily=sunrise,sunset\
          &current=temperature_2m&timezone=auto&forecast_hours={HOURS}"
     )
 }
@@ -95,7 +114,8 @@ pub fn parse_forecast(json: &str) -> Result<Forecast> {
         let precip_pct = h["precipitation_probability"][i].as_u64().unwrap_or(0).min(100) as u8;
         let code = h["weather_code"][i].as_u64().and_then(|c| u16::try_from(c).ok()).unwrap_or(u16::MAX);
         let uv = h["uv_index"][i].as_f64().unwrap_or(0.0) as f32;
-        slots.push(HourSlot { hour, temp_c, precip_pct, uv, icon: icon_for(code) });
+        let is_day = h["is_day"][i].as_u64() != Some(0);
+        slots.push(HourSlot { hour, temp_c, precip_pct, uv, is_day, moon: 0.0, icon: icon_for(code) });
     }
     if slots.is_empty() {
         bail!("forecast has no hours");
@@ -103,7 +123,23 @@ pub fn parse_forecast(json: &str) -> Result<Forecast> {
     let utc_offset_secs = v["utc_offset_seconds"].as_i64().and_then(|o| i32::try_from(o).ok()).unwrap_or(0);
     let first = times[0].as_str().ok_or_else(|| anyhow!("bad hourly time"))?;
     let start_unix = local_iso_to_unix(first, utc_offset_secs).ok_or_else(|| anyhow!("bad hourly time {first}"))?;
-    Ok(Forecast { now, utc_offset_secs, start_unix, slots })
+    for (i, s) in slots.iter_mut().enumerate() {
+        s.moon = crate::moon::phase(start_unix + i as i64 * 3600);
+    }
+    let d = &v["daily"];
+    let hm = |iso: &Value| -> Option<(u8, u8)> {
+        let c = clock(iso.as_str()?)?;
+        Some((c[..2].parse().ok()?, c[3..5].parse().ok()?))
+    };
+    let sun = (0..d["time"].as_array().map_or(0, Vec::len))
+        .filter_map(|k| {
+            let t = d["time"][k].as_str()?;
+            let num = |r: std::ops::Range<usize>| t.get(r)?.parse::<u32>().ok();
+            let date = crate::date::Date { year: num(0..4)? as i32, month: num(5..7)? as u8, day: num(8..10)? as u8 };
+            Some(SunDay { date, rise: hm(&d["sunrise"][k])?, set: hm(&d["sunset"][k])? })
+        })
+        .collect();
+    Ok(Forecast { now, utc_offset_secs, start_unix, slots, sun })
 }
 
 /// `"2026-11-25T13:00"` (local) → Unix time.
@@ -167,7 +203,11 @@ mod tests {
                   "temperature_2m":[21.5,21.0,20.6,19.6,18.4,17.2,16.0],
                   "precipitation_probability":[0,0,10,35,80,null,0],
                   "weather_code":[3,2,2,61,95,0,0],
-                  "uv_index":[3.4,2.9,1.65,0.6,0.1,0.0,0.0]}}"#;
+                  "uv_index":[3.4,2.9,1.65,0.6,0.1,0.0,0.0],
+                  "is_day":[1,1,1,1,0,0,0]},
+        "daily":{"time":["2026-11-25","2026-11-26"],
+                 "sunrise":["2026-11-25T06:21","2026-11-26T06:22"],
+                 "sunset":["2026-11-25T16:38","2026-11-26T16:38"]}}"#;
 
     #[test]
     fn forecast_url_asks_for_six_local_hours() {
@@ -176,7 +216,8 @@ mod tests {
         for part in [
             "latitude=32.0853",
             "longitude=34.7818",
-            "hourly=temperature_2m,precipitation_probability,weather_code,uv_index",
+            "hourly=temperature_2m,precipitation_probability,weather_code,uv_index,is_day",
+            "daily=sunrise,sunset",
             "current=temperature_2m",
             "timezone=auto",
             "forecast_hours=24",
@@ -193,7 +234,9 @@ mod tests {
         assert_eq!(f.slots.len(), 7, "all hours of the answer (up to HOURS)");
         // 2026-11-25 13:00 local (UTC+2) = 11:00 UTC
         assert_eq!(f.start_unix, crate::date::Date { year: 2026, month: 11, day: 25 }.days_since_epoch() * 86_400 + 11 * 3600);
-        assert_eq!(f.slots[0], HourSlot { hour: 13, temp_c: 21.5, precip_pct: 0, uv: 3.4, icon: Icon::Cloudy });
+        assert_eq!(f.slots[0].hour, 13);
+        assert_eq!((f.slots[0].temp_c, f.slots[0].precip_pct, f.slots[0].uv), (21.5, 0, 3.4));
+        assert_eq!(f.slots[0].icon, Icon::Cloudy);
         assert_eq!(f.slots[3].icon, Icon::Rain);
         assert_eq!(f.slots[3].precip_pct, 35);
         assert_eq!(f.slots[4].icon, Icon::Thunder);
@@ -215,6 +258,22 @@ mod tests {
         let f = parse_forecast(FORECAST).unwrap(); // 7 hours: 13..19
         assert_eq!(f.window(f.start_unix + 3600 + 5).unwrap()[0].hour, 14);
         assert!(f.window(f.start_unix + 2 * 3600).is_none(), "only 5 hours left");
+    }
+
+    #[test]
+    fn night_hours_and_moon_phase() {
+        let f = parse_forecast(FORECAST).unwrap();
+        assert!(f.slots[3].is_day && !f.slots[4].is_day, "16:00 day, 17:00 night");
+        // 2026-11-25 is the day after a full moon
+        assert!((f.slots[4].moon - 0.5).abs() < 0.05, "{}", f.slots[4].moon);
+    }
+
+    #[test]
+    fn sunrise_and_sunset_per_day() {
+        let f = parse_forecast(FORECAST).unwrap();
+        let d = crate::date::Date { year: 2026, month: 11, day: 26 };
+        assert_eq!(f.sun_on(d), Some(&SunDay { date: d, rise: (6, 22), set: (16, 38) }));
+        assert_eq!(f.sun_on(crate::date::Date { year: 2026, month: 12, day: 1 }), None);
     }
 
     #[test]

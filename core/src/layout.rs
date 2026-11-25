@@ -414,7 +414,7 @@ mod tests {
 
     fn slots(temp: f32) -> Vec<HourSlot> {
         (0..6)
-            .map(|i| HourSlot { hour: 6 + i, temp_c: temp + f32::from(i), precip_pct: i * 10, uv: 0.0, icon: Icon::Rain })
+            .map(|i| HourSlot { hour: 6 + i, temp_c: temp + f32::from(i), precip_pct: i * 10, uv: 0.0, is_day: true, moon: 0.0, icon: Icon::Rain })
             .collect()
     }
 
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn rain_shows_only_above_zero_otherwise_high_uv() {
-        let s = |precip_pct, uv| HourSlot { hour: 12, temp_c: 30.0, precip_pct, uv, icon: Icon::Clear };
+        let s = |precip_pct, uv| HourSlot { hour: 12, temp_c: 30.0, precip_pct, uv, is_day: true, moon: 0.0, icon: Icon::Clear };
         assert_eq!(rain_or_uv(&s(0, 2.0)), None, "no rain, low UV: empty");
         assert_eq!(rain_or_uv(&s(30, 2.0)), Some(("30%".into(), Ink::Blue)));
         assert_eq!(rain_or_uv(&s(0, 7.4)), Some(("UV 7".into(), Ink::Red)));

@@ -6,7 +6,7 @@ use crate::date::Date;
 use crate::weather::{Forecast, HourSlot, Icon};
 
 /// Bump when the format gains fields, so data from older firmware is fetched again.
-const HEADER: &str = "frogterm-info v2";
+const HEADER: &str = "frogterm-info v3";
 const ICONS: [Icon; 9] = [
     Icon::Clear,
     Icon::PartlyCloudy,
@@ -54,7 +54,27 @@ impl Info {
                 s.push_str(&format!("forecast {} {} {}\n", f.utc_offset_secs, f.start_unix, f.now));
                 for h in &f.slots {
                     let icon = ICONS.iter().position(|&i| i == h.icon).unwrap_or(2);
-                    s.push_str(&format!("h {} {} {} {} {}\n", h.hour, h.temp_c, h.precip_pct, icon, h.uv));
+                    s.push_str(&format!(
+                        "h {} {} {} {} {} {} {}\n",
+                        h.hour,
+                        h.temp_c,
+                        h.precip_pct,
+                        icon,
+                        h.uv,
+                        u8::from(h.is_day),
+                        h.moon
+                    ));
+                }
+                for sd in &f.sun {
+                    let d = sd.date;
+                    s.push_str(&format!(
+                        "sun {:04}-{:02}-{:02} {} {}\n",
+                        d.year,
+                        d.month,
+                        d.day,
+                        hm(Some(sd.rise)),
+                        hm(Some(sd.set))
+                    ));
                 }
             }
         }
@@ -93,6 +113,7 @@ impl Info {
                         start_unix: f.next()?.parse().ok()?,
                         now: f.next()?.to_string(),
                         slots: Vec::new(),
+                        sun: Vec::new(),
                     });
                 }
                 "h" => {
@@ -102,9 +123,19 @@ impl Info {
                         temp_c: f.next()?.parse().ok()?,
                         precip_pct: f.next()?.parse().ok()?,
                         icon: *ICONS.get(f.next()?.parse::<usize>().ok()?)?,
-                        uv: f.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
+                        uv: f.next()?.parse().ok()?,
+                        is_day: f.next()? == "1",
+                        moon: f.next()?.parse().ok()?,
                     };
                     forecast.as_mut()?.slots.push(slot);
+                }
+                "sun" => {
+                    let mut f = rest.split(' ');
+                    let ds = f.next()?;
+                    let date = Date { year: ds.get(0..4)?.parse().ok()?, month: ds.get(5..7)?.parse().ok()?, day: ds.get(8..10)?.parse().ok()? };
+                    let rise = parse_hm(f.next()?)??;
+                    let set = parse_hm(f.next()?)??;
+                    forecast.as_mut()?.sun.push(crate::weather::SunDay { date, rise, set });
                 }
                 "events" if rest != "none" => events = Some(Vec::new()),
                 "tomorrow" if rest != "none" => tomorrow = Some(Vec::new()),
@@ -139,8 +170,17 @@ mod tests {
                 slots: icons
                     .iter()
                     .enumerate()
-                    .map(|(i, &icon)| HourSlot { hour: 13 + i as u8, temp_c: 21.5 - i as f32, precip_pct: (i * 10) as u8, uv: i as f32 * 1.5, icon })
+                    .map(|(i, &icon)| HourSlot {
+                        hour: 13 + i as u8,
+                        temp_c: 21.5 - i as f32,
+                        precip_pct: (i * 10) as u8,
+                        uv: i as f32 * 1.5,
+                        is_day: i < 4,
+                        moon: 0.5 + i as f32 * 0.01,
+                        icon,
+                    })
                     .collect(),
+                sun: vec![crate::weather::SunDay { date: Date { year: 2026, month: 11, day: 25 }, rise: (6, 21), set: (16, 38) }],
             }),
             events: Some(vec![
                 DayEvent { start: None, end: None, title: "ДР у друга".into() },
@@ -166,10 +206,11 @@ mod tests {
 
     #[test]
     fn info_from_older_firmware_is_not_used() {
-        // v1 had no tomorrow's events: must be fetched again, not shown as "nothing tomorrow"
+        // v1 had no tomorrow's events, v2 no day/night or sun times: fetch again
         let v1 = "frogterm-info v1\nfetched 1795600000\ndate 2026-11-25\nforecast none\nevents 0\n";
         assert_eq!(Info::from_text(v1), None);
-        assert!(info().to_text().starts_with("frogterm-info v2\n"));
+        assert_eq!(Info::from_text(&v1.replace("v1", "v2")), None);
+        assert!(info().to_text().starts_with("frogterm-info v3\n"));
     }
 
     #[test]
