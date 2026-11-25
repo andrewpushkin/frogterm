@@ -10,7 +10,7 @@ pub struct Tone {
 pub const SUCCESS: &[Tone] = &[Tone { hz: 2000, ms: 150 }];
 /// Progress tick at each step of a button-started update (Wi-Fi up,
 /// downloads done, screen drawing).
-pub const TICK: &[Tone] = &[Tone { hz: 1200, ms: 30 }];
+pub const TICK: &[Tone] = &[Tone { hz: 2700, ms: 40 }, Tone { hz: 0, ms: 60 }, Tone { hz: 2700, ms: 40 }];
 
 /// Short chirp: "I saw the button press" (right after the button wakes the device).
 pub const PRESS: &[Tone] = &[Tone { hz: 3000, ms: 50 }];
@@ -41,10 +41,12 @@ mod tests {
     }
 
     #[test]
-    fn tick_is_short_low_and_unlike_the_other_sounds() {
-        assert_eq!(TICK.len(), 1);
-        assert!(TICK[0].ms <= 30, "very short");
-        assert!(TICK[0].hz < SUCCESS[0].hz && TICK[0].hz < PRESS[0].hz, "lower than done/press");
+    fn tick_is_an_audible_double_pip() {
+        // the piezo is loud only near its resonance (~2.5-4 kHz): a 1.2 kHz,
+        // 30 ms tick was inaudible on the device
+        let pips: Vec<&Tone> = TICK.iter().filter(|t| t.hz > 0).collect();
+        assert_eq!(pips.len(), 2, "pip-pip, unlike the single press chirp");
+        assert!(pips.iter().all(|t| (2500..=4000).contains(&t.hz) && t.ms >= 40));
         for other in [SUCCESS, PRESS, ERROR] {
             assert_ne!(TICK, other);
         }
