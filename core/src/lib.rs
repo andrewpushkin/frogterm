@@ -2,6 +2,7 @@
 //! Keep dependencies small and embedded-friendly: this code runs on the ESP32-S3.
 
 pub mod album;
+pub mod app;
 pub mod battery;
 pub mod beep;
 pub mod buttons;
