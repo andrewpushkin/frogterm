@@ -1,29 +1,31 @@
-//! One wake of the device (spec 7.1 / 7.2): the same steps as `make emulator`.
+//! The device's side of one wake: hardware set-up, then the wake logic shared
+//! with the PC emulator (`frogterm_core::app`), then deep sleep. This file
+//! implements `Device` for the reTerminal: panel, buzzer, NVS, flash, Wi-Fi.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use frogterm_core::album::{self, Photo};
+use frogterm_core::app::{self, Device, Online, Readings, State};
+use frogterm_core::beep::Tone;
+use frogterm_core::buttons::Press;
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
-use frogterm_core::dither::{dither_area, veil};
 use frogterm_core::framebuf::{FrameBuffer, Ink};
-use frogterm_core::layout::{draw_events_box, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
-use frogterm_core::photo_list::{after_refresh, PhotoList};
 use frogterm_core::info::Info;
-use frogterm_core::schedule::{self, UpdatePlan, WakePlan};
+use frogterm_core::photo_list::{after_refresh, PhotoList};
 use frogterm_core::weather::{self, Forecast};
-use frogterm_core::buttons::{self, Press};
-use frogterm_core::{battery, beep, jpeg, screen, stock, tz};
+use frogterm_core::{beep, jpeg, schedule, screen, stock, tz};
 
 use crate::board::Board;
 use crate::epd::Epd;
 use crate::net::{self, HttpStatus, Net};
 use crate::rtc::Rtc;
 use crate::settings::{host, settings, Settings};
-use crate::sleep::{button_held, deep_sleep, wake_cause, Wake};
+use crate::sleep::{button_held, deep_sleep, wake_cause};
 use crate::store::Store;
 
 /// Whole update must finish within this, or the device gives up and sleeps.
@@ -33,78 +35,153 @@ const ATTEMPTS: usize = 3;
 /// Stack of the download threads (TLS handshake needs ~10 KB).
 const BG_STACK: usize = 24 * 1024;
 
-/// Persisted between wakes (NVS).
-struct State {
+/// `app::State` and the last access point, kept in NVS between wakes.
+struct Nvs {
     nvs: EspNvs<NvsDefault>,
-    /// Unix time of the planned daily update.
-    target: i64,
-    /// Failed updates in a row.
-    attempt: u8,
     /// Last access point joined (BSSID, channel).
     last_ap: Option<([u8; 6], u8)>,
-    /// Photo screens stored in flash, and which of them were on the panel.
-    stock_count: u8,
-    seen: stock::Seen,
-    /// Unix time of the last panel refresh.
-    last_refresh: Option<i64>,
-    /// A button press postponed for panel rest (the timer wake carries it out).
-    postponed: Option<Press>,
-    /// Stored photo slot on the screen now (for next/previous browsing).
-    current: u8,
 }
 
-impl State {
-    fn load(part: EspDefaultNvsPartition) -> Result<State> {
+impl Nvs {
+    fn open(part: EspDefaultNvsPartition) -> Result<(Nvs, State)> {
         let nvs = EspNvs::new(part, "frogterm", true)?;
-        let target = nvs.get_i64("target")?.unwrap_or(0);
-        let attempt = nvs.get_u8("attempt")?.unwrap_or(0);
         let mut ap = [0u8; 7];
         let last_ap = match nvs.get_blob("last_ap", &mut ap)? {
             Some(b) if b.len() == 7 => Some(([b[0], b[1], b[2], b[3], b[4], b[5]], b[6])),
             _ => None,
         };
-        let stock_count = nvs.get_u8("stock_n")?.unwrap_or(0);
         // older firmware kept a counter: photos 0..stock_next were shown
         let seen = match nvs.get_u32("seen")? {
             Some(s) => s,
             None => stock::from_counter(nvs.get_u8("stock_next")?.unwrap_or(0)),
         };
-        let last_refresh = nvs.get_i64("refreshed")?;
-        let postponed = Press::from_code(nvs.get_u8("pressed")?.unwrap_or(0));
-        let current = nvs.get_u8("current")?.unwrap_or(0);
-        Ok(State { nvs, target, attempt, last_ap, stock_count, seen, last_refresh, postponed, current })
+        let state = State {
+            target: nvs.get_i64("target")?.unwrap_or(0),
+            attempt: nvs.get_u8("attempt")?.unwrap_or(0),
+            stock_count: nvs.get_u8("stock_n")?.unwrap_or(0),
+            seen,
+            last_refresh: nvs.get_i64("refreshed")?,
+            postponed: Press::from_code(nvs.get_u8("pressed")?.unwrap_or(0)),
+            current: nvs.get_u8("current")?.unwrap_or(0),
+        };
+        Ok((Nvs { nvs, last_ap }, state))
     }
 
-    /// Weather + events of the last fetch. NVS spreads its writes over its
-    /// pages (wear levelling), so the ~24 writes a day don't wear the flash.
-    fn load_info(&self) -> Option<Info> {
-        let mut buf = vec![0u8; 8 * 1024];
-        let bytes = self.nvs.get_blob("info", &mut buf).ok()??;
-        Info::from_text(&String::from_utf8_lossy(bytes))
-    }
-
-    fn save_info(&mut self, info: &Info) {
-        if let Err(e) = self.nvs.set_blob("info", info.to_text().as_bytes()) {
-            log::warn!("could not store weather/calendar: {e}");
-        }
-    }
-
-    fn save(&mut self) {
-        let _ = self.nvs.set_i64("target", self.target);
-        let _ = self.nvs.set_u8("attempt", self.attempt);
-        let _ = self.nvs.set_u8("stock_n", self.stock_count);
-        let _ = self.nvs.set_u32("seen", self.seen);
-        let _ = self.nvs.set_u8("pressed", self.postponed.map_or(0, Press::code));
-        let _ = self.nvs.set_u8("current", self.current);
-        if let Some(t) = self.last_refresh {
-            let _ = self.nvs.set_i64("refreshed", t);
+    fn save(&mut self, s: &State) {
+        let nvs = &mut self.nvs;
+        let _ = nvs.set_i64("target", s.target);
+        let _ = nvs.set_u8("attempt", s.attempt);
+        let _ = nvs.set_u8("stock_n", s.stock_count);
+        let _ = nvs.set_u32("seen", s.seen);
+        let _ = nvs.set_u8("pressed", s.postponed.map_or(0, Press::code));
+        let _ = nvs.set_u8("current", s.current);
+        if let Some(t) = s.last_refresh {
+            let _ = nvs.set_i64("refreshed", t);
         }
         if let Some((bssid, channel)) = self.last_ap {
             let mut b = [0u8; 7];
             b[..6].copy_from_slice(&bssid);
             b[6] = channel;
-            let _ = self.nvs.set_blob("last_ap", &b);
+            let _ = nvs.set_blob("last_ap", &b);
         }
+    }
+}
+
+/// The reTerminal as `app::Device`.
+struct Reterminal<'d> {
+    cfg: &'d Settings,
+    board: Board<'d>,
+    epd: Epd<'d>,
+    rtc: Rtc<'d>,
+    rtc_now: Option<i64>,
+    nvs: Nvs,
+    /// Taken by the (single) Wi-Fi session of a wake.
+    modem: Option<Modem<'static>>,
+    sysloop: EspSystemEventLoop,
+    nvs_part: EspDefaultNvsPartition,
+}
+
+impl Device for Reterminal<'_> {
+    fn beep(&mut self, tones: &[Tone]) {
+        self.board.beep(tones);
+    }
+
+    fn led(&mut self, on: bool) {
+        self.board.led(on);
+    }
+
+    fn clock(&self) -> Option<i64> {
+        unix_now()
+    }
+
+    fn show(&mut self, fb: &FrameBuffer) -> Result<()> {
+        self.epd.show(fb)
+    }
+
+    fn load_screen(&mut self, slot: u8) -> Option<FrameBuffer> {
+        Store.load_screen(slot as usize)
+    }
+
+    fn save_screen(&mut self, slot: u8, fb: &FrameBuffer) -> Result<()> {
+        Store.save_screen(slot as usize, fb)
+    }
+
+    /// Weather + events of the last fetch. NVS spreads its writes over its
+    /// pages (wear levelling), so the ~24 writes a day don't wear the flash.
+    fn load_info(&mut self) -> Option<Info> {
+        let mut buf = vec![0u8; 8 * 1024];
+        let bytes = self.nvs.nvs.get_blob("info", &mut buf).ok()??;
+        Info::from_text(&String::from_utf8_lossy(bytes))
+    }
+
+    fn save_info(&mut self, info: &Info) {
+        if let Err(e) = self.nvs.nvs.set_blob("info", info.to_text().as_bytes()) {
+            log::warn!("could not store weather/calendar: {e}");
+        }
+    }
+
+    fn save_state(&mut self, state: &State) {
+        self.nvs.save(state);
+    }
+
+    fn go_online(&mut self, now: Option<i64>, batch: u8, ticks: bool) -> Result<Online> {
+        let tick = |step: &str| {
+            if ticks {
+                log::info!("progress: {step}");
+                crate::board::play(beep::TICK);
+            }
+        };
+        log_heap("before Wi-Fi");
+        // read the stored photo list from flash while Wi-Fi joins
+        let preload = if batch > 0 {
+            Some(crate::spawn_with_internal_stack("preload", 8 * 1024, || Store.load_list())?)
+        } else {
+            None
+        };
+        let modem = self.modem.take().ok_or_else(|| anyhow!("Wi-Fi was already used in this wake"))?;
+        let cfg = self.cfg;
+        let mut net = Net::connect(modem, self.sysloop.clone(), self.nvs_part.clone(), cfg.wifi_ssid, cfg.wifi_password, self.nvs.last_ap)?;
+        tick("Wi-Fi up");
+        if net.joined.is_some() {
+            self.nvs.last_ap = net.joined;
+        }
+        log_heap("Wi-Fi up");
+        let stored_list = preload.and_then(|h| h.join().ok()).flatten();
+        // the RTC keeps good time; wait for NTP only if it lost power
+        let now = now.or_else(|| net.synced_time(Duration::from_secs(15))).ok_or_else(|| anyhow!("time unknown"))?;
+        let fetched = online(cfg, &mut net, now, batch, stored_list)?;
+        // every Wi-Fi session corrects the RTC from NTP (usually already
+        // done during the downloads, so this rarely waits)
+        match net.synced_time(Duration::from_secs(10)) {
+            Some(t) => match self.rtc.write(t) {
+                Ok(()) => log::info!("RTC set from NTP (was {:+} s off)", self.rtc_now.map_or(0, |r| r - t)),
+                Err(e) => log::warn!("RTC write failed: {e:#}"),
+            },
+            None => log::warn!("NTP did not answer within 10 s, RTC kept as is"),
+        }
+        net.stop();
+        tick("downloads done");
+        Ok(fetched)
     }
 }
 
@@ -126,7 +203,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
     if let Some(zone) = tz::Zone::parse(cfg.timezone) {
         tz::set_zone(zone);
     }
-    let mut state = State::load(nvs_part.clone())?;
+    let (nvs, mut state) = Nvs::open(nvs_part.clone())?;
     let mut rtc = Rtc::new(p.i2c0, p.pins.gpio19, p.pins.gpio20)?;
     let rtc_now = rtc.read().unwrap_or_else(|e| {
         log::warn!("RTC read failed: {e:#}");
@@ -141,54 +218,21 @@ fn run_inner() -> Result<std::convert::Infallible> {
     let wake = wake_cause();
     log::info!("frogterm {} woke by {wake:?}, RTC {rtc_now:?}", env!("CARGO_PKG_VERSION"));
 
-    if wake == Wake::Timer {
-        if let WakePlan::Sleep(secs) = schedule::on_timer_wake(rtc_now, state.target) {
-            log::info!("woke {secs} s early");
-            deep_sleep(secs, schedule::arm_button(button_held()));
-        }
+    // woke early: straight back to sleep, before powering anything up
+    if let Some(secs) = app::sleep_early(wake, rtc_now, &state) {
+        log::info!("woke {secs} s early");
+        deep_sleep(secs, schedule::arm_button(button_held()));
     }
 
     let mut board = Board::new(p.pins.gpio6, p.pins.gpio21, p.pins.gpio16, p.pins.gpio14)?;
-    if matches!(wake, Wake::Button(_)) {
-        board.beep(beep::PRESS); // "I saw the press"
-    }
     crate::sleep::spawn_press_listener();
-    // which button this update is for: this wake's, or one postponed for panel rest
-    let press = match wake {
-        Wake::Button(p) => Some(p),
-        Wake::Timer => state.postponed,
-        Wake::PowerOn => None,
-    };
-    log::info!("button: {press:?}");
-    // audible progress, only when a person pressed a button (06:00 stays quiet)
-    let by_person = schedule::started_by_person(matches!(wake, Wake::Button(_)), wake == Wake::Timer, state.postponed.is_some());
-    let progress = |step: &str| {
-        if by_person {
-            log::info!("progress: {step}");
-            crate::board::play(beep::TICK);
-        }
-    };
-    board.led(true);
     // watchdog: never stay awake (battery) if anything hangs
     std::thread::spawn(|| {
         std::thread::sleep(WATCHDOG);
         log::error!("update took longer than {} s, giving up", WATCHDOG.as_secs());
         deep_sleep(30 * 60, schedule::arm_button(button_held()));
     });
-
     let battery_mv = board.battery_mv();
-    log::info!("battery {battery_mv:?} mV = {:?} %", battery_mv.map(battery::percent));
-    if battery_mv.is_some_and(battery::too_low_to_update) {
-        log::warn!("battery too low for a panel refresh");
-        board.beep(beep::ERROR);
-        sleep_until_next(&mut state, rtc_now, cfg.update_hour);
-    }
-
-    // if this update hangs or crashes, the watchdog's 30-minute sleep must
-    // count as a retry, not as an early wake before the daily update
-    let provisional = schedule::after_failure(rtc_now.or_else(unix_now), state.attempt.saturating_add(1), cfg.update_hour);
-    state.target = provisional.target;
-    state.save();
 
     let mut epd = Epd::new(p.spi2, p.pins.gpio7, p.pins.gpio9, p.pins.gpio10, p.pins.gpio11, p.pins.gpio12, p.pins.gpio13)?;
     if cfg!(feature = "bars") {
@@ -197,181 +241,19 @@ fn run_inner() -> Result<std::convert::Infallible> {
         deep_sleep(24 * 3600, schedule::arm_button(button_held()));
     }
 
-    // e-paper care: at least 180 s between refreshes; a quick second press
-    // is done automatically when the panel may refresh again
-    if let Some(now) = rtc_now {
-        // a person pressing a button waits less than the daily update
-        let rest = if press.is_some() { schedule::BUTTON_REST_SECS } else { schedule::PANEL_REST_SECS };
-        if let Some(wait) = schedule::panel_rest(now, state.last_refresh, rest) {
-            log::info!("panel refreshed {} s ago, updating in {wait} s", rest - wait as i64);
-            state.target = now + wait as i64;
-            // remember which button a person pressed, for the postponed update
-            if let Wake::Button(p) = wake {
-                state.postponed = Some(p);
-            }
-            state.save();
-            board.led(false);
-            // buttons stay active: a press chirps and replaces the postponed action
-            deep_sleep(wait, schedule::arm_button(button_held()));
-        }
-    }
-
-    state.postponed = None; // carried out now
-    let stored_info = state.load_info();
-
-    // side buttons: browse the stored photos, no Wi-Fi
-    if let Some(dir @ (Press::Next | Press::Previous)) = press {
-        let now = rtc_now.or_else(unix_now);
-        let shown = (|| -> Result<()> {
-            let now = now.ok_or_else(|| anyhow!("time unknown"))?;
-            let slot = buttons::browse(state.current, state.stock_count, dir).ok_or_else(|| anyhow!("no stored photos"))?;
-            let photo = Store.load_screen(slot as usize).ok_or_else(|| anyhow!("stored photo {slot} unreadable"))?;
-            log::info!("{dir:?}: stored photo {slot} of {}", state.stock_count);
-            let info = stored_info.clone().unwrap_or(Info {
-                fetched_at: 0,
-                date: tz::to_local(now).0,
-                forecast: None,
-                events: None,
-                tomorrow: None,
-            });
-            let fb = compose(&cfg, photo, &info, now, battery_mv, room.map(|r| r.0));
-            progress("drawing the screen");
-            epd.show(&fb)?;
-            state.current = slot;
-            state.seen = stock::mark(state.seen, slot);
-            state.last_refresh = Some(now);
-            Ok(())
-        })();
-        match shown {
-            Ok(()) => board.beep(beep::SUCCESS),
-            Err(e) => {
-                log::warn!("browse: {e:#}");
-                board.beep(beep::ERROR);
-            }
-        }
-        board.led(false);
-        sleep_until_next(&mut state, now, cfg.update_hour);
-    }
-
-    // green button / timer: a stored photo not seen yet; once all were seen
-    // (also by browsing), a new batch. What this wake has to fetch: nothing,
-    // weather+calendar, or also photos
-    let unseen_slot = stock::next_unseen(state.seen, state.stock_count, state.current);
-    let next_photo = unseen_slot.and_then(|slot| Store.load_screen(slot as usize).map(|fb| (slot, fb)));
-    let photos_left = if next_photo.is_some() { stock::unseen(state.seen, state.stock_count) } else { 0 };
-    let plan = match rtc_now {
-        Some(now) => schedule::plan_update(
-            now,
-            stored_info.as_ref().map(|i| (i.fetched_at, i.date)),
-            photos_left,
-            i64::from(cfg.refresh_minutes) * 60,
-        ),
-        None if photos_left == 0 => UpdatePlan::RefreshAll,
-        None => UpdatePlan::RefreshInfo,
+    let rules = app::Config {
+        update_hour: cfg.update_hour,
+        refresh_minutes: cfg.refresh_minutes,
+        photo_batch: cfg.photo_batch,
+        opacity: cfg.opacity,
+        place: cfg.place,
+        panel_rest: true,
     };
-    log::info!("plan {plan:?}: {photos_left} of {} stored photos not seen yet", state.stock_count);
-
-    let result = (|| -> Result<Option<i64>> {
-        let (now, info, batch) = match plan {
-            UpdatePlan::Offline => {
-                let now = rtc_now.ok_or_else(|| anyhow!("time unknown"))?;
-                (now, stored_info.clone().ok_or_else(|| anyhow!("no stored info"))?, None)
-            }
-            UpdatePlan::RefreshInfo | UpdatePlan::RefreshAll => {
-                let all = plan == UpdatePlan::RefreshAll;
-                log_heap("before Wi-Fi");
-                // read the stored photo list from flash while Wi-Fi joins
-                let preload = if all {
-                    Some(crate::spawn_with_internal_stack("preload", 8 * 1024, || Store.load_list())?)
-                } else {
-                    None
-                };
-                let mut net = Net::connect(p.modem, sysloop, nvs_part, cfg.wifi_ssid, cfg.wifi_password, state.last_ap)?;
-                progress("Wi-Fi up");
-                if net.joined.is_some() {
-                    state.last_ap = net.joined;
-                }
-                log_heap("Wi-Fi up");
-                let stored_list = preload.and_then(|h| h.join().ok()).flatten();
-                // the RTC keeps good time; wait for NTP only if it lost power
-                let now = rtc_now.or_else(|| net.synced_time(Duration::from_secs(15))).ok_or_else(|| anyhow!("time unknown"))?;
-                let (info, batch) = online(&cfg, &mut net, now, all, stored_list, stored_info.as_ref())?;
-                // every Wi-Fi session corrects the RTC from NTP (usually already
-                // done during the downloads, so this rarely waits)
-                match net.synced_time(Duration::from_secs(10)) {
-                    Some(t) => match rtc.write(t) {
-                        Ok(()) => log::info!("RTC set from NTP (was {:+} s off)", rtc_now.map_or(0, |r| r - t)),
-                        Err(e) => log::warn!("RTC write failed: {e:#}"),
-                    },
-                    None => log::warn!("NTP did not answer within 10 s, RTC kept as is"),
-                }
-                net.stop();
-                progress("downloads done");
-                (now, info, batch)
-            }
-        };
-
-        // flash writes, with Wi-Fi already off
-        if plan != UpdatePlan::Offline {
-            state.save_info(&info);
-        }
-        let photo = match batch {
-            Some(batch) => {
-                let mut saved = 0u8;
-                for (i, fb) in batch.iter().enumerate() {
-                    match Store.save_screen(i, fb) {
-                        Ok(()) => saved += 1,
-                        Err(e) => {
-                            log::warn!("could not store photo {i}: {e:#}");
-                            break;
-                        }
-                    }
-                }
-                if saved > 0 {
-                    log::info!("stored a new batch of {saved} photos");
-                    state.stock_count = saved;
-                } else if state.stock_count > 0 {
-                    log::warn!("no new photos, showing the stored ones again");
-                }
-                state.seen = 0;
-                batch.into_iter().next().or_else(|| Store.load_screen(0)).map(|fb| (0, fb))
-            }
-            None => next_photo,
-        };
-        let (slot, photo) = photo.ok_or_else(|| anyhow!("no photo to show"))?;
-        log::info!("showing stored photo {slot} of {}", state.stock_count);
-
-        let fb = compose(&cfg, photo, &info, now, battery_mv, room.map(|r| r.0));
-        progress("drawing the screen");
-        epd.show(&fb)?;
-        state.current = slot;
-        state.seen = stock::mark(state.seen, slot);
-        state.last_refresh = Some(now);
-        Ok(Some(now))
-    })();
-
-    let now = match result {
-        Ok(now) => {
-            board.beep(beep::SUCCESS);
-            state.attempt = 0;
-            now
-        }
-        Err(e) => {
-            log::error!("update failed: {e:#}");
-            board.beep(beep::ERROR);
-            state.attempt = state.attempt.saturating_add(1);
-            let retry = schedule::after_failure(rtc_now.or_else(unix_now), state.attempt, cfg.update_hour);
-            if schedule::retry_after_failure(state.attempt).is_none() {
-                state.attempt = 0; // back to the daily schedule
-            }
-            state.target = retry.target;
-            state.save();
-            board.led(false);
-            deep_sleep(retry.secs, schedule::arm_button(button_held()));
-        }
-    };
-    board.led(false);
-    sleep_until_next(&mut state, now.or_else(|| unix_now()), cfg.update_hour)
+    let mut dev = Reterminal { cfg: &cfg, board, epd, rtc, rtc_now, nvs, modem: Some(p.modem), sysloop, nvs_part };
+    let readings = Readings { now: rtc_now, battery_mv, room_c: room.map(|r| r.0) };
+    let secs = app::run(&mut dev, &mut state, &rules, wake, readings);
+    // buttons stay active: a press wakes the device (and replaces a postponed action)
+    deep_sleep(secs, schedule::arm_button(button_held()))
 }
 
 /// Free memory, for diagnosing out-of-memory crashes.
@@ -392,30 +274,9 @@ fn unix_now() -> Option<i64> {
     (t > 1_700_000_000).then_some(t) // the clock was set (after Nov 2023)
 }
 
-fn sleep_until_next(state: &mut State, now: Option<i64>, hour: u8) -> ! {
-    let Some(now) = now else {
-        log::warn!("time unknown, retrying in an hour");
-        state.save();
-        deep_sleep(schedule::when_time_unknown(), schedule::arm_button(button_held()));
-    };
-    state.target = schedule::next_update(now, hour);
-    state.save();
-    let (d, s) = tz::to_local(state.target);
-    log::info!("sleeping until {} {:02}:{:02} local", d.label(), s / 3600, s % 3600 / 60);
-    deep_sleep((state.target - now).max(1) as u64, schedule::arm_button(button_held()))
-}
-
-/// Online part: fresh weather + calendars, and with `all` a new batch of
-/// ready-to-show photo screens. Weather/calendar that fail fall back to the
-/// stored ones.
-fn online(
-    cfg: &Settings,
-    net: &mut Net,
-    now: i64,
-    all: bool,
-    stored_list: Option<PhotoList>,
-    stored_info: Option<&Info>,
-) -> Result<(Info, Option<Vec<FrameBuffer>>)> {
+/// Online part: fresh weather + calendars, and `batch` new ready-to-show
+/// photo screens (0 = none).
+fn online(cfg: &Settings, net: &mut Net, now: i64, batch: u8, stored_list: Option<PhotoList>) -> Result<Online> {
     let (today, _) = tz::to_local(now);
     let mut store = Store;
     // weather and calendars download in the background while we do the photos
@@ -423,59 +284,23 @@ fn online(
         let spawn = |name: &str| std::thread::Builder::new().name(name.into()).stack_size(BG_STACK);
         let weather = spawn("weather").spawn_scoped(s, || fetch_weather(cfg))?;
         let calendars = spawn("calendars").spawn_scoped(s, || fetch_calendars(cfg, today))?;
-        let batch = if all {
+        let screens = if batch > 0 {
             let t = std::time::Instant::now();
             let mut list = photo_list(cfg, net, &mut store, now, stored_list)?;
-            let batch: Vec<FrameBuffer> = (0..cfg.photo_batch)
+            let screens: Vec<FrameBuffer> = (0..batch)
                 .filter_map(|_| random_screen(&mut list, &mut store, cfg.opacity, now).map_err(|e| log::warn!("{e:#}")).ok())
                 .collect();
-            log::info!("downloaded {} photo screens in {:.1} s", batch.len(), t.elapsed().as_secs_f32());
-            Some(batch)
+            log::info!("downloaded {} photo screens in {:.1} s", screens.len(), t.elapsed().as_secs_f32());
+            screens
         } else {
-            None
+            Vec::new()
         };
         let forecast = weather.join().map_err(|_| anyhow!("weather thread panicked"))?;
         let forecast = forecast.map_err(|e| log::warn!("weather: {e:#}")).ok();
         let events = calendars.join().map_err(|_| anyhow!("calendar thread panicked"))?;
-        Ok((forecast, events, batch))
+        Ok((forecast, events, screens))
     })?;
-    let info = Info {
-        fetched_at: now,
-        date: today,
-        forecast: forecast.or_else(|| stored_info.and_then(|i| i.forecast.clone())),
-        events: events.as_ref().map(|e| e.0.clone()).or_else(|| stored_info.filter(|i| i.date == today).and_then(|i| i.events.clone())),
-        tomorrow: events.map(|e| e.1).or_else(|| stored_info.filter(|i| i.date == today).and_then(|i| i.tomorrow.clone())),
-    };
-    Ok((info, batch))
-}
-
-/// Draws the events and weather boxes over a stored photo screen.
-fn compose(cfg: &Settings, mut fb: FrameBuffer, info: &Info, now: i64, battery_mv: Option<u32>, room_c: Option<f32>) -> FrameBuffer {
-    let (today, secs) = tz::to_local(now);
-    let now_hm = ((secs / 3600) as u8, (secs % 3600 / 60) as u8);
-    let backdrop = if cfg.opacity >= 100 { Backdrop::Solid } else { Backdrop::Clear };
-    // sunrise/sunset replace the (static) place name when the weather is known
-    let sun = info.forecast.as_ref().and_then(|f| f.sun_on(today)).map(|s| (s.rise, s.set));
-    let status = match sun {
-        Some(_) => format!("{:02}:{:02}", now_hm.0, now_hm.1),
-        None => format!("{} {:02}:{:02}", cfg.place, now_hm.0, now_hm.1),
-    };
-    let agenda = calendar::agenda(info.events.clone(), info.tomorrow.clone(), now_hm);
-    draw_weather_box(&mut fb, info.forecast.as_ref().and_then(|f| f.window(now)), backdrop);
-    draw_events_box(
-        &mut fb,
-        &EventsInfo {
-            date: &today.label(),
-            status: &status,
-            room_c,
-            battery_pct: battery_mv.map(battery::percent),
-            events: agenda.events.as_deref(),
-            tomorrow: agenda.tomorrow,
-            sun,
-        },
-        backdrop,
-    );
-    fb
+    Ok(Online { now, forecast, events, batch })
 }
 
 /// Cached list from flash, re-read from Google when missing or a week old.
@@ -591,19 +416,10 @@ fn random_screen(list: &mut PhotoList, store: &mut Store, opacity: u8, now: i64)
                 .collect()
         });
         let mut fb = FrameBuffer::new(Ink::White);
-        let filled = slots.iter().zip(decoded).try_for_each(|(s, rgb)| -> Result<()> {
-            let mut rgb = rgb?;
-            if opacity < 100 {
-                for boxed in [events_rect(), weather_rect()] {
-                    veil(&mut rgb, &s.area, &boxed, opacity);
-                }
-            }
-            dither_area(&rgb, &s.area, &mut fb)?;
-            if let Some(taken) = list.photos[s.photo].taken {
-                draw_photo_date(&mut fb, &s.area, taken);
-            }
-            Ok(())
-        });
+        let filled = slots
+            .iter()
+            .zip(decoded)
+            .try_for_each(|(s, rgb)| app::place_photo(&mut fb, &s.area, rgb?, opacity, list.photos[s.photo].taken));
         match filled {
             Ok(()) => return Ok(fb),
             Err(e) => {

@@ -666,6 +666,7 @@ dependencies = [
  "anyhow",
  "embedded-graphics",
  "jpeg-decoder",
+ "log",
  "serde_json",
  "u8g2-fonts",
 ]

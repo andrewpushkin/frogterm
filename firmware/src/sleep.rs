@@ -2,18 +2,12 @@
 //! green = update, the side buttons = browse the stored photos.
 
 use esp_idf_svc::sys;
-use frogterm_core::buttons::{self, Press};
+pub use frogterm_core::app::Wake;
+use frogterm_core::buttons;
 
 /// All buttons, green first.
 pub const BUTTON_GPIOS: [i32; 3] =
     [buttons::GREEN_GPIO as i32, buttons::NEXT_GPIO as i32, buttons::PREVIOUS_GPIO as i32];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Wake {
-    Timer,
-    Button(Press),
-    PowerOn,
-}
 
 pub fn wake_cause() -> Wake {
     #[allow(non_upper_case_globals)]
