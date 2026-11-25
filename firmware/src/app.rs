@@ -285,13 +285,14 @@ fn run_inner() -> Result<std::convert::Infallible> {
                 // the RTC keeps good time; wait for NTP only if it lost power
                 let now = rtc_now.or_else(|| net.synced_time(Duration::from_secs(15))).ok_or_else(|| anyhow!("time unknown"))?;
                 let (info, batch) = online(&cfg, &mut net, now, all, stored_list, stored_info.as_ref())?;
-                match net.synced_time(Duration::ZERO) {
-                    Some(t) => {
-                        if let Err(e) = rtc.write(t) {
-                            log::warn!("RTC write failed: {e:#}");
-                        }
-                    }
-                    None => log::info!("NTP not done yet, RTC kept as is"),
+                // every Wi-Fi session corrects the RTC from NTP (usually already
+                // done during the downloads, so this rarely waits)
+                match net.synced_time(Duration::from_secs(10)) {
+                    Some(t) => match rtc.write(t) {
+                        Ok(()) => log::info!("RTC set from NTP (was {:+} s off)", rtc_now.map_or(0, |r| r - t)),
+                        Err(e) => log::warn!("RTC write failed: {e:#}"),
+                    },
+                    None => log::warn!("NTP did not answer within 10 s, RTC kept as is"),
                 }
                 net.stop();
                 progress("downloads done");
