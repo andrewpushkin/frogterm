@@ -90,46 +90,41 @@ fn classify(ch: char) -> Class {
     }
 }
 
-/// Draws `text` with its top-left at `pos`; returns the drawn width in pixels.
-/// Characters missing from both fonts are skipped.
+/// Bold: every glyph is drawn twice, 1 px apart, and letters get 1 px more
+/// room so they don't run together. (There is no bold font with both
+/// Cyrillic and Hebrew at this size.)
+const BOLD: i32 = 1;
+
+/// Draws `text` in bold with its top-left at `pos`; returns the drawn width
+/// in pixels. Characters missing from both fonts are skipped.
 pub fn draw_mixed<D: DrawTarget<Color = Ink>>(target: &mut D, text: &str, pos: Point, ink: Ink) -> i32 {
-    let mut x = 0;
-    for run in visual_runs(text) {
-        let font = if run.hebrew { &HEBREW } else { &LATIN_CYRILLIC };
-        let at = pos + Point::new(x, 0);
-        match font.render(run.text.as_str(), at, VerticalPosition::Top, FontColor::Transparent(ink), target) {
-            Ok(d) => x += d.advance.x,
-            Err(_) => {
-                // a glyph is missing: draw what we can, one character at a time
-                let mut buf = [0u8; 4];
-                for ch in run.text.chars() {
-                    let at = pos + Point::new(x, 0);
-                    let s: &str = ch.encode_utf8(&mut buf);
-                    if let Ok(d) = font.render(s, at, VerticalPosition::Top, FontColor::Transparent(ink), target) {
-                        x += d.advance.x;
-                    }
-                }
-            }
+    layout_glyphs(text, |font, s, x| {
+        for dx in 0..=BOLD {
+            let at = pos + Point::new(x + dx, 0);
+            font.render(s, at, VerticalPosition::Top, FontColor::Transparent(ink), target).ok()?;
         }
-    }
-    x
+        Some(())
+    })
 }
 
 /// Width `draw_mixed` would draw, without drawing (for right alignment).
 pub fn mixed_width(text: &str) -> i32 {
+    layout_glyphs(text, |_, _, _| Some(()))
+}
+
+/// Walks the characters of `text` in visual order with their font and x
+/// offset, calling `draw` for each; returns the total width. A character
+/// `draw` fails on (missing glyph) takes no room.
+fn layout_glyphs(text: &str, mut draw: impl FnMut(&FontRenderer, &str, i32) -> Option<()>) -> i32 {
     let mut x = 0;
+    let mut buf = [0u8; 4];
     for run in visual_runs(text) {
         let font = if run.hebrew { &HEBREW } else { &LATIN_CYRILLIC };
-        match font.get_rendered_dimensions(run.text.as_str(), Point::zero(), VerticalPosition::Top) {
-            Ok(d) => x += d.advance.x,
-            Err(_) => {
-                let mut buf = [0u8; 4];
-                for ch in run.text.chars() {
-                    let s: &str = ch.encode_utf8(&mut buf);
-                    if let Ok(d) = font.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Top) {
-                        x += d.advance.x;
-                    }
-                }
+        for ch in run.text.chars() {
+            let s: &str = ch.encode_utf8(&mut buf);
+            let Ok(d) = font.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Top) else { continue };
+            if draw(font, s, x).is_some() {
+                x += d.advance.x + BOLD;
             }
         }
     }
@@ -182,6 +177,32 @@ mod tests {
             let inked = (10..30).flat_map(|y| (10..10 + w as u32).map(move |x| (x, y))).filter(|&(x, y)| fb.get(x, y) == Ink::Black).count();
             assert!(inked > 10, "{text}: nothing drawn (missing glyphs?)");
         }
+    }
+
+    #[test]
+    fn text_is_bold_strokes_two_pixels_wide() {
+        // a vertical stroke ("l", "ו") is at least 2 px wide on every row it inks
+        for text in ["l", "ו", "Н"] {
+            let mut fb = FrameBuffer::new(Ink::White);
+            draw_mixed(&mut fb, text, Point::new(10, 10), Ink::Black);
+            let rows: Vec<Vec<u32>> = (10..30).map(|y| (8..30).filter(|&x| fb.get(x, y) == Ink::Black).collect()).collect();
+            assert!(rows.iter().any(|r| !r.is_empty()), "{text}: nothing drawn");
+            for r in rows.iter().filter(|r| !r.is_empty()) {
+                assert!(r.len() >= 2, "{text}: a 1 px wide stroke {r:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn bold_letters_do_not_run_into_each_other() {
+        // "ll": a blank column between the two strokes
+        let mut fb = FrameBuffer::new(Ink::White);
+        let w = draw_mixed(&mut fb, "ll", Point::new(10, 10), Ink::Black) as u32;
+        let inked = |x: u32| (10..30).any(|y| fb.get(x, y) == Ink::Black);
+        let cols: Vec<bool> = (10..10 + w).map(inked).collect();
+        let first = cols.iter().position(|&c| c).unwrap();
+        let gap = cols[first..].iter().position(|&c| !c).map(|g| first + g);
+        assert!(gap.is_some_and(|g| cols[g..].iter().any(|&c| c)), "{cols:?}");
     }
 
     #[test]
