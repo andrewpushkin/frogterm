@@ -2,9 +2,10 @@
 
 /// Green button: next new photo (and Wi-Fi when needed).
 pub const GREEN_GPIO: u32 = 3;
-/// Side buttons: browse the stored photos without Wi-Fi.
-pub const NEXT_GPIO: u32 = 4;
-pub const PREVIOUS_GPIO: u32 = 5;
+/// Side buttons: browse the stored photos without Wi-Fi. Checked on the
+/// device: the left button is GPIO4, the right one GPIO5.
+pub const PREVIOUS_GPIO: u32 = 4;
+pub const NEXT_GPIO: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Press {

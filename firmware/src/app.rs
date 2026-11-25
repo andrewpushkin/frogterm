@@ -196,8 +196,10 @@ fn run_inner() -> Result<std::convert::Infallible> {
     // e-paper care: at least 180 s between refreshes; a quick second press
     // is done automatically when the panel may refresh again
     if let Some(now) = rtc_now {
-        if let Some(wait) = schedule::panel_rest(now, state.last_refresh) {
-            log::info!("panel refreshed {} s ago, updating in {wait} s", schedule::PANEL_REST_SECS - wait as i64);
+        // a person pressing a button waits less than the daily update
+        let rest = if press.is_some() { schedule::BUTTON_REST_SECS } else { schedule::PANEL_REST_SECS };
+        if let Some(wait) = schedule::panel_rest(now, state.last_refresh, rest) {
+            log::info!("panel refreshed {} s ago, updating in {wait} s", rest - wait as i64);
             state.target = now + wait as i64;
             // remember which button a person pressed, for the postponed update
             if let Wake::Button(p) = wake {
