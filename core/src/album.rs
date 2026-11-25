@@ -14,10 +14,14 @@
 //!
 //! PAYLOAD (same shape in both places):
 //! `[null, [ITEM, …up to 300], "<next page token>" | null, [album_id, title, …, [21]=total, …], …]`
-//! ITEM: `["<media id>", ["https://lh3.googleusercontent.com/pw/…", width, height, …], timestamp, …]`
+//! ITEM: `["<media id>", ["https://lh3.googleusercontent.com/pw/…", width, height, …], taken, "…", utc_offset, added, …]`
+//! `taken` = when the photo was taken (Unix ms, UTC), `utc_offset` = the camera's
+//! offset then (ms, e.g. 7200000), `added` = when it was put in the album.
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
+
+use crate::date::Date;
 
 /// One photo of the album.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +32,8 @@ pub struct Photo {
     pub width: u32,
     /// Original height in pixels.
     pub height: u32,
+    /// Local date the photo was taken (where it was taken), if Google says.
+    pub taken: Option<Date>,
 }
 
 impl Photo {
@@ -220,7 +226,15 @@ fn parse_item(item: &Value) -> Option<Photo> {
         url: url.to_string(),
         width: u32::try_from(d[1].as_u64()?).ok()?,
         height: u32::try_from(d[2].as_u64()?).ok()?,
+        taken: taken_date(item),
     })
+}
+
+/// Local date of `taken` + `utc_offset` (offset 0 when missing).
+fn taken_date(item: &Value) -> Option<Date> {
+    let ms = item[2].as_i64().filter(|&ms| ms > 0)?;
+    let offset_ms = item[4].as_i64().filter(|o| o.abs() <= 14 * 3_600_000).unwrap_or(0);
+    Some(Date::from_unix(ms.div_euclid(1000), (offset_ms / 1000) as i32))
 }
 
 #[cfg(test)]
@@ -233,6 +247,8 @@ mod tests {
             [format!("https://lh3.googleusercontent.com/pw/P{n}"), w, h, null, [null, null, 1]],
             1766156380000u64,
             "x",
+            7200000,
+            1795604269656u64,
             {"15": 1}
         ])
     }
@@ -261,14 +277,16 @@ mod tests {
     fn share_page_gives_first_page_token_id_and_total() {
         let p = payload(vec![item(1, 3000, 4000), item(2, 4000, 3000)], Some("TOKEN1"), 6797);
         let page = parse_share_page(&share_page(&p)).unwrap();
+        // 1766156380000 ms = 2025-12-19 15:00 UTC, 17:00 at the camera's +2 h
+        let taken = Some(Date { year: 2025, month: 12, day: 19 });
         assert_eq!(page.album_id.as_deref(), Some("ALBUM1"));
         assert_eq!(page.next_token.as_deref(), Some("TOKEN1"));
         assert_eq!(page.total, Some(6797));
         assert_eq!(
             page.photos,
             vec![
-                Photo { url: "https://lh3.googleusercontent.com/pw/P1".into(), width: 3000, height: 4000 },
-                Photo { url: "https://lh3.googleusercontent.com/pw/P2".into(), width: 4000, height: 3000 },
+                Photo { url: "https://lh3.googleusercontent.com/pw/P1".into(), width: 3000, height: 4000, taken },
+                Photo { url: "https://lh3.googleusercontent.com/pw/P2".into(), width: 4000, height: 3000, taken },
             ]
         );
     }
@@ -280,6 +298,18 @@ mod tests {
         assert_eq!(page.photos.len(), 1);
         assert_eq!(page.photos[0].url, "https://lh3.googleusercontent.com/pw/P3");
         assert_eq!(page.next_token.as_deref(), Some("TOKEN2"));
+    }
+
+    #[test]
+    fn taken_date_is_local_to_the_camera() {
+        // 2025-12-19 23:30 UTC: still the 19th in London, already the 20th in Israel
+        let ms = Date { year: 2025, month: 12, day: 19 }.days_since_epoch() * 86_400_000 + 23 * 3_600_000 + 1_800_000;
+        let at = |offset: Value| serde_json::json!(["id", ["https://lh3.googleusercontent.com/pw/P", 1, 1], ms, "x", offset]);
+        assert_eq!(parse_item(&at(0.into())).unwrap().taken, Some(Date { year: 2025, month: 12, day: 19 }));
+        assert_eq!(parse_item(&at(7_200_000.into())).unwrap().taken, Some(Date { year: 2025, month: 12, day: 20 }));
+        assert_eq!(parse_item(&at(Value::Null)).unwrap().taken, Some(Date { year: 2025, month: 12, day: 19 }), "no offset: UTC");
+        let no_time = serde_json::json!(["id", ["https://lh3.googleusercontent.com/pw/P", 1, 1], null]);
+        assert_eq!(parse_item(&no_time).unwrap().taken, None);
     }
 
     #[test]
@@ -372,7 +402,7 @@ mod tests {
 
     #[test]
     fn portrait_and_square_photos_are_tall() {
-        let p = |w, h| Photo { url: String::new(), width: w, height: h };
+        let p = |w, h| Photo { url: String::new(), width: w, height: h, taken: None };
         assert!(p(3000, 4000).is_tall());
         assert!(p(1080, 1920).is_tall());
         assert!(p(128, 128).is_tall(), "a square loses less in a half slot");
@@ -383,7 +413,7 @@ mod tests {
 
     #[test]
     fn sized_url_asks_for_smart_crop_jpeg() {
-        let p = Photo { url: "https://lh3.googleusercontent.com/pw/P1".into(), width: 1, height: 1 };
+        let p = Photo { url: "https://lh3.googleusercontent.com/pw/P1".into(), width: 1, height: 1, taken: None };
         assert_eq!(p.sized_url(800, 480), "https://lh3.googleusercontent.com/pw/P1=w800-h480-p-rj");
     }
 }

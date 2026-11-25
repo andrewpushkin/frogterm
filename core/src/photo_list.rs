@@ -5,11 +5,12 @@
 //! or a cached URL stopped working.
 
 use crate::album::Photo;
+use crate::date::Date;
 
 /// One week.
 pub const MAX_AGE_SECS: u64 = 7 * 24 * 3600;
 
-const HEADER: &str = "frogterm-photo-list v2";
+const HEADER: &str = "frogterm-photo-list v3";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhotoList {
@@ -24,7 +25,8 @@ impl PhotoList {
     pub fn to_text(&self) -> String {
         let mut s = format!("{HEADER}\nalbum {}\nfetched {}\n", self.album_url, self.fetched_at);
         for p in &self.photos {
-            s.push_str(&format!("{} {} {}\n", p.width, p.height, p.url));
+            let taken = p.taken.map_or("-".to_string(), Date::iso);
+            s.push_str(&format!("{} {} {} {}\n", p.width, p.height, taken, p.url));
         }
         s
     }
@@ -38,12 +40,16 @@ impl PhotoList {
         let fetched_at = lines.next()?.strip_prefix("fetched ")?.parse().ok()?;
         let mut photos = Vec::new();
         for line in lines.filter(|l| !l.is_empty()) {
-            // `<width> <height> <url>`
-            let mut f = line.splitn(3, ' ');
+            // `<width> <height> <taken date or -> <url>`
+            let mut f = line.splitn(4, ' ');
             let width = f.next()?.parse().ok()?;
             let height = f.next()?.parse().ok()?;
+            let taken = match f.next()? {
+                "-" => None,
+                d => Some(Date::parse_iso(d)?),
+            };
             let url = f.next()?.to_string();
-            photos.push(Photo { url, width, height });
+            photos.push(Photo { url, width, height, taken });
         }
         Some(PhotoList { album_url, fetched_at, photos })
     }
@@ -82,16 +88,16 @@ mod tests {
     use super::*;
 
     fn list() -> PhotoList {
-        let p = |id: &str, w, h| Photo { url: format!("https://lh3.googleusercontent.com/pw/{id}"), width: w, height: h };
+        let p = |id: &str, w, h, taken| Photo { url: format!("https://lh3.googleusercontent.com/pw/{id}"), width: w, height: h, taken };
         PhotoList {
             album_url: "https://photos.app.goo.gl/abc".into(),
             fetched_at: 1_795_600_000,
-            photos: vec![p("A", 3000, 4000), p("B", 1920, 835)],
+            photos: vec![p("A", 3000, 4000, Some(Date { year: 2026, month: 3, day: 7 })), p("B", 1920, 835, None)],
         }
     }
 
     #[test]
-    fn round_trips_through_text_with_sizes() {
+    fn round_trips_through_text_with_sizes_and_dates() {
         assert_eq!(PhotoList::from_text(&list().to_text()), Some(list()));
     }
 
@@ -99,6 +105,13 @@ mod tests {
     fn old_format_without_sizes_is_ignored() {
         let v1 = "frogterm-photo-list v1\nalbum https://photos.app.goo.gl/abc\nfetched 1\nhttps://lh3.googleusercontent.com/pw/A\n";
         assert_eq!(PhotoList::from_text(v1), None);
+    }
+
+    #[test]
+    fn list_without_dates_is_read_again() {
+        // v2 had no dates: ignoring it makes the next batch re-read the album
+        let v2 = "frogterm-photo-list v2\nalbum https://photos.app.goo.gl/abc\nfetched 1\n3000 4000 https://lh3.googleusercontent.com/pw/A\n";
+        assert_eq!(PhotoList::from_text(v2), None);
     }
 
     #[test]
@@ -121,8 +134,9 @@ mod tests {
     fn garbage_is_not_a_list() {
         assert_eq!(PhotoList::from_text(""), None);
         assert_eq!(PhotoList::from_text("hello\nworld\n"), None);
-        assert_eq!(PhotoList::from_text("frogterm-photo-list v2\nalbum x\nfetched soon\n"), None);
-        assert_eq!(PhotoList::from_text("frogterm-photo-list v2\nalbum x\nfetched 1\n12 https://x\n"), None);
+        assert_eq!(PhotoList::from_text("frogterm-photo-list v3\nalbum x\nfetched soon\n"), None);
+        assert_eq!(PhotoList::from_text("frogterm-photo-list v3\nalbum x\nfetched 1\n12 https://x\n"), None);
+        assert_eq!(PhotoList::from_text("frogterm-photo-list v3\nalbum x\nfetched 1\n1 2 yesterday https://x\n"), None);
     }
 
     #[test]

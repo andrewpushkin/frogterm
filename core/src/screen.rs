@@ -57,7 +57,7 @@ mod tests {
     use super::*;
 
     fn photo(w: u32, h: u32) -> Photo {
-        Photo { url: format!("u{w}x{h}"), width: w, height: h }
+        Photo { url: format!("u{w}x{h}"), width: w, height: h, taken: None }
     }
 
     fn full() -> Rectangle {
