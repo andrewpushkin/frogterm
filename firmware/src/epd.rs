@@ -119,12 +119,16 @@ fn light_sleep_until_busy_high(max: Duration) {
         sys::esp_sleep_enable_gpio_switch(false);
         sys::gpio_wakeup_enable(BUSY_GPIO, sys::gpio_int_type_t_GPIO_INTR_HIGH_LEVEL);
         // a button press also wakes us, so the button thread can chirp
-        sys::gpio_wakeup_enable(crate::sleep::BUTTON_GPIO, sys::gpio_int_type_t_GPIO_INTR_LOW_LEVEL);
+        for &b in &crate::sleep::BUTTON_GPIOS {
+            sys::gpio_wakeup_enable(b, sys::gpio_int_type_t_GPIO_INTR_LOW_LEVEL);
+        }
         sys::esp_sleep_enable_gpio_wakeup();
         sys::esp_sleep_enable_timer_wakeup(max.as_micros().max(1000) as u64);
         sys::esp_light_sleep_start();
         sys::gpio_wakeup_disable(BUSY_GPIO);
-        sys::gpio_wakeup_disable(crate::sleep::BUTTON_GPIO);
+        for &b in &crate::sleep::BUTTON_GPIOS {
+            sys::gpio_wakeup_disable(b);
+        }
         sys::esp_sleep_disable_wakeup_source(sys::esp_sleep_source_t_ESP_SLEEP_WAKEUP_ALL);
     }
     if crate::sleep::button_held() {

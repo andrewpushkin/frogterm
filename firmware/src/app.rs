@@ -15,6 +15,7 @@ use frogterm_core::photo_list::{after_refresh, PhotoList};
 use frogterm_core::info::Info;
 use frogterm_core::schedule::{self, UpdatePlan, WakePlan};
 use frogterm_core::weather::{self, Forecast};
+use frogterm_core::buttons::{self, Press};
 use frogterm_core::{battery, beep, jpeg, screen, tz};
 
 use crate::board::Board;
@@ -46,8 +47,10 @@ struct State {
     stock_next: u8,
     /// Unix time of the last panel refresh.
     last_refresh: Option<i64>,
-    /// A button press was postponed for panel rest (the timer wake carries it out).
-    press_postponed: bool,
+    /// A button press postponed for panel rest (the timer wake carries it out).
+    postponed: Option<Press>,
+    /// Stored photo slot on the screen now (for next/previous browsing).
+    current: u8,
 }
 
 impl State {
@@ -63,8 +66,9 @@ impl State {
         let stock_count = nvs.get_u8("stock_n")?.unwrap_or(0);
         let stock_next = nvs.get_u8("stock_next")?.unwrap_or(0);
         let last_refresh = nvs.get_i64("refreshed")?;
-        let press_postponed = nvs.get_u8("pressed")?.unwrap_or(0) == 1;
-        Ok(State { nvs, target, attempt, last_ap, stock_count, stock_next, last_refresh, press_postponed })
+        let postponed = Press::from_code(nvs.get_u8("pressed")?.unwrap_or(0));
+        let current = nvs.get_u8("current")?.unwrap_or(0);
+        Ok(State { nvs, target, attempt, last_ap, stock_count, stock_next, last_refresh, postponed, current })
     }
 
     /// Weather + events of the last fetch. NVS spreads its writes over its
@@ -86,7 +90,8 @@ impl State {
         let _ = self.nvs.set_u8("attempt", self.attempt);
         let _ = self.nvs.set_u8("stock_n", self.stock_count);
         let _ = self.nvs.set_u8("stock_next", self.stock_next);
-        let _ = self.nvs.set_u8("pressed", u8::from(self.press_postponed));
+        let _ = self.nvs.set_u8("pressed", self.postponed.map_or(0, Press::code));
+        let _ = self.nvs.set_u8("current", self.current);
         if let Some(t) = self.last_refresh {
             let _ = self.nvs.set_i64("refreshed", t);
         }
@@ -137,12 +142,19 @@ fn run_inner() -> Result<std::convert::Infallible> {
     }
 
     let mut board = Board::new(p.pins.gpio6, p.pins.gpio21, p.pins.gpio16, p.pins.gpio14)?;
-    if wake == Wake::Button {
+    if matches!(wake, Wake::Button(_)) {
         board.beep(beep::PRESS); // "I saw the press"
     }
     crate::sleep::spawn_press_listener();
-    // audible progress, only when a person pressed the button (06:00 stays quiet)
-    let by_person = schedule::started_by_person(wake == Wake::Button, wake == Wake::Timer, state.press_postponed);
+    // which button this update is for: this wake's, or one postponed for panel rest
+    let press = match wake {
+        Wake::Button(p) => Some(p),
+        Wake::Timer => state.postponed,
+        Wake::PowerOn => None,
+    };
+    log::info!("button: {press:?}");
+    // audible progress, only when a person pressed a button (06:00 stays quiet)
+    let by_person = schedule::started_by_person(matches!(wake, Wake::Button(_)), wake == Wake::Timer, state.postponed.is_some());
     let progress = |step: &str| {
         if by_person {
             log::info!("progress: {step}");
@@ -184,17 +196,54 @@ fn run_inner() -> Result<std::convert::Infallible> {
         if let Some(wait) = schedule::panel_rest(now, state.last_refresh) {
             log::info!("panel refreshed {} s ago, updating in {wait} s", schedule::PANEL_REST_SECS - wait as i64);
             state.target = now + wait as i64;
-            // remember that a person asked, so the postponed update still ticks
-            state.press_postponed |= wake == Wake::Button;
+            // remember which button a person pressed, for the postponed update
+            if let Wake::Button(p) = wake {
+                state.postponed = Some(p);
+            }
             state.save();
             board.led(false);
             deep_sleep(wait, false);
         }
     }
 
-    state.press_postponed = false; // carried out now
-    // what this wake has to fetch: nothing, weather+calendar, or also photos
+    state.postponed = None; // carried out now
     let stored_info = state.load_info();
+
+    // side buttons: browse the stored photos, no Wi-Fi
+    if let Some(dir @ (Press::Next | Press::Previous)) = press {
+        let now = rtc_now.or_else(unix_now);
+        let shown = (|| -> Result<()> {
+            let now = now.ok_or_else(|| anyhow!("time unknown"))?;
+            let slot = buttons::browse(state.current, state.stock_count, dir).ok_or_else(|| anyhow!("no stored photos"))?;
+            let photo = Store.load_screen(slot as usize).ok_or_else(|| anyhow!("stored photo {slot} unreadable"))?;
+            log::info!("{dir:?}: stored photo {slot} of {}", state.stock_count);
+            let info = stored_info.clone().unwrap_or(Info {
+                fetched_at: 0,
+                date: tz::to_local(now).0,
+                forecast: None,
+                events: None,
+                tomorrow: None,
+            });
+            let fb = compose(&cfg, photo, &info, now, battery_mv, room.map(|r| r.0));
+            progress("drawing the screen");
+            epd.show(&fb)?;
+            state.current = slot;
+            state.last_refresh = Some(now);
+            Ok(())
+        })();
+        match shown {
+            Ok(()) => board.beep(beep::SUCCESS),
+            Err(e) => {
+                log::warn!("browse: {e:#}");
+                board.beep(beep::ERROR);
+            }
+        }
+        board.led(false);
+        sleep_until_next(&mut state, now, cfg.update_hour);
+    }
+
+    // green button / timer: what this wake has to fetch: nothing,
+    // weather+calendar, or also photos
     let next_photo = (state.stock_next < state.stock_count)
         .then(|| Store.load_screen(state.stock_next as usize))
         .flatten();
@@ -279,6 +328,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
             None => next_photo,
         };
         let photo = photo.ok_or_else(|| anyhow!("no photo to show"))?;
+        state.current = state.stock_next.min(state.stock_count.saturating_sub(1));
         state.stock_next = state.stock_next.saturating_add(1).min(state.stock_count);
 
         let fb = compose(&cfg, photo, &info, now, battery_mv, room.map(|r| r.0));
