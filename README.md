@@ -158,3 +158,7 @@ calendar go to wear-levelled NVS, the album list weekly — far below the
 - ED2208 panel init sequence: Zephyr `drivers/display/display_ed2208_gca.c`
   (Apache-2.0), matching Seeed_GFX.
 - Battery voltage-to-percent table: Seeed's reTerminal E-series ESPHome cookbook.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

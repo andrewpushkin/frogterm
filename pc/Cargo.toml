@@ -2,6 +2,7 @@
 name = "frogterm-pc"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "PC tools for the reTerminal frame: Google album check and device emulator"
 
 [dependencies]

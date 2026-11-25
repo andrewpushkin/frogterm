@@ -2,6 +2,7 @@
 name = "frogterm-firmware"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "reTerminal E1002 photo + weather + calendar frame firmware (ESP32-S3)"
 
 [[bin]]

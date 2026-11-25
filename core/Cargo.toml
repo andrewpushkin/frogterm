@@ -2,6 +2,7 @@
 name = "frogterm-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Hardware-independent logic shared by the reTerminal firmware and the PC emulator"
 
 [dependencies]
