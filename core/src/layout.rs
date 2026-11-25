@@ -332,6 +332,14 @@ pub fn draw_icon<D: DrawTarget<Color = Ink>>(target: &mut D, icon: Icon, center:
     let square = Rectangle::new(center - Point::new(half, half), Size::new(ICON_SIZE, ICON_SIZE));
     let mut t = target.clipped(&square);
     let g = Grid { c: center };
+    if night.is_some() {
+        // night: each hour gets its own black sky tile, with stars when clear
+        let _ = square.into_styled(PrimitiveStyle::with_fill(Ink::Black)).draw(&mut t);
+        if matches!(icon, Icon::Clear | Icon::PartlyCloudy) {
+            stars(&mut t, &g);
+        }
+    }
+    let line_ink = if night.is_some() { Ink::White } else { Ink::Black };
     match icon {
         Icon::Clear => match night {
             Some(phase) => moon(&mut t, &g, (0, 0), 30, phase),
@@ -348,7 +356,7 @@ pub fn draw_icon<D: DrawTarget<Color = Ink>>(target: &mut D, icon: Icon, center:
         Icon::Fog => {
             for (y, x0, x1) in [(-10, -14, 12), (-2, -17, 17), (6, -12, 15), (14, -16, 10)] {
                 let _ = Line::new(g.p(x0, y), g.p(x1, y))
-                    .into_styled(PrimitiveStyle::with_stroke(Ink::Black, 2))
+                    .into_styled(PrimitiveStyle::with_stroke(line_ink, 2))
                     .draw(&mut t);
             }
         }
@@ -433,7 +441,23 @@ fn moon<D: DrawTarget<Color = Ink>>(t: &mut D, g: &Grid, at: (i32, i32), d: u32,
         Some(Pixel(c + Point::new(dx, dy), if lit { Ink::Yellow } else { Ink::Black }))
     });
     let _ = t.draw_iter(pixels);
-    let _ = Circle::with_center(c, g.d(d) + 1).into_styled(PrimitiveStyle::with_stroke(Ink::Black, 1)).draw(t);
+    // the dark side vanishes in the black sky; a blue ring keeps the disc visible
+    let _ = Circle::with_center(c, g.d(d) + 1).into_styled(PrimitiveStyle::with_stroke(Ink::Blue, 1)).draw(t);
+}
+
+/// A few stars in the corners of a night tile (clear of the moon).
+fn stars<D: DrawTarget<Color = Ink>>(t: &mut D, g: &Grid) {
+    let white = PrimitiveStyle::with_fill(Ink::White);
+    // small crosses
+    for (x, y) in [(-16, -15), (15, 13)] {
+        let c = g.p(x, y);
+        let _ = Rectangle::new(c - Point::new(1, 0), Size::new(3, 1)).into_styled(white).draw(t);
+        let _ = Rectangle::new(c - Point::new(0, 1), Size::new(1, 3)).into_styled(white).draw(t);
+    }
+    // single dots, one yellow
+    for (x, y, ink) in [(14, -16, Ink::White), (-15, 15, Ink::White), (-17, 2, Ink::Yellow), (17, -3, Ink::White)] {
+        let _ = t.draw_iter([Pixel(g.p(x, y), ink)]);
+    }
 }
 
 /// A cloud as the union of three puffs and a base, with a black outline:
@@ -692,11 +716,36 @@ mod tests {
         assert_eq!(header_count(&header(None, Some(90)), Ink::Red), 0);
     }
 
-    fn icon_inks(icon: Icon, night: Option<f32>) -> (usize, usize, usize) {
-        let mut fb = FrameBuffer::new(Ink::White);
+    fn icon_fb(icon: Icon, night: Option<f32>) -> FrameBuffer {
+        let mut fb = FrameBuffer::new(Ink::Green);
         draw_icon(&mut fb, icon, Point::new(100, 100), night);
-        let count = |ink| (70..130).flat_map(|y| (70..130).map(move |x| (x, y))).filter(|&(x, y)| fb.get(x, y) == ink).count();
-        (count(Ink::Yellow), count(Ink::Red), count(Ink::Black))
+        fb
+    }
+
+    fn count(fb: &FrameBuffer, ink: Ink) -> usize {
+        (70..130).flat_map(|y| (70..130).map(move |x| (x, y))).filter(|&(x, y)| fb.get(x, y) == ink).count()
+    }
+
+    fn icon_inks(icon: Icon, night: Option<f32>) -> (usize, usize, usize) {
+        let fb = icon_fb(icon, night);
+        (count(&fb, Ink::Yellow), count(&fb, Ink::Red), count(&fb, Ink::Black))
+    }
+
+    #[test]
+    fn night_hours_have_a_black_sky_tile() {
+        let square = (ICON_SIZE * ICON_SIZE) as usize;
+        for icon in [Icon::Clear, Icon::PartlyCloudy, Icon::Cloudy, Icon::Rain, Icon::Fog, Icon::Snow, Icon::Thunder] {
+            let fb = icon_fb(icon, Some(0.3));
+            assert_eq!(count(&fb, Ink::Green), 60 * 60 - square, "{icon:?}: the tile covers the whole icon square");
+            assert!(count(&fb, Ink::Black) > square / 4, "{icon:?}: black sky");
+        }
+        assert_eq!(count(&icon_fb(Icon::Clear, None), Ink::Black), 0, "no tile by day");
+    }
+
+    #[test]
+    fn clear_night_sky_has_stars() {
+        assert!(count(&icon_fb(Icon::Clear, Some(0.5)), Ink::White) >= 4, "stars");
+        assert!(count(&icon_fb(Icon::Fog, Some(0.5)), Ink::White) > 20, "fog lines turn white at night");
     }
 
     #[test]
@@ -715,8 +764,8 @@ mod tests {
         let lit = |p| icon_inks(Icon::Clear, Some(p)).0;
         assert!(lit(0.5) > lit(0.25) + 50, "full > first quarter");
         assert!(lit(0.25) > lit(0.05) + 50, "first quarter > thin crescent");
-        let (yellow, _, black) = icon_inks(Icon::Clear, Some(0.0));
-        assert!(yellow < 10 && black > 50, "new moon: dark disc, still visible");
+        let fb = icon_fb(Icon::Clear, Some(0.0));
+        assert!(count(&fb, Ink::Yellow) < 10 && count(&fb, Ink::Blue) > 10, "new moon: dark, its disc outlined");
         assert!((lit(0.25) as i32 - lit(0.75) as i32).abs() < 20, "first and last quarter equally lit");
     }
 
