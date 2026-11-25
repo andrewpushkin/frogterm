@@ -20,6 +20,7 @@ use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::FontRenderer;
 
 use crate::calendar::DayEvent;
+use crate::date::Date;
 use crate::framebuf::{FrameBuffer, Ink, HEIGHT, WIDTH};
 use crate::text::{draw_mixed, mixed_width};
 use crate::weather::{HourSlot, Icon};
@@ -276,6 +277,24 @@ pub fn draw_events_box(fb: &mut FrameBuffer, info: &EventsInfo, backdrop: Backdr
         let more = format!("+{} more", events.len() - shown);
         pen.text(&mut t, &SMALL_FONT, &more, at(title_x, y + 2), HorizontalAlignment::Left, Ink::Blue);
     }
+}
+
+/// Where the photo's date goes: the top-right corner of its screen area
+/// (the whole screen, or one half for two tall photos side by side).
+pub fn photo_date_rect(area: &Rectangle) -> Rectangle {
+    const W: u32 = 110; // "30 Sep 2026" plus the outline, with room to spare
+    const H: u32 = 18;
+    let right = area.top_left.x + area.size.width as i32 - MARGIN as i32;
+    Rectangle::new(Point::new(right - W as i32, area.top_left.y + MARGIN as i32 - 4), Size::new(W, H))
+}
+
+/// The date a photo was taken, e.g. "7 Nov 2026": a small label without a box
+/// (black, white outline), drawn into the stored photo screen.
+pub fn draw_photo_date(fb: &mut FrameBuffer, area: &Rectangle, taken: Date) {
+    let r = photo_date_rect(area);
+    let mut t = fb.clipped(&r);
+    let at = Point::new(r.top_left.x + r.size.width as i32 - 2, r.top_left.y + 2);
+    Pen { halo: true }.text(&mut t, &SMALL_FONT, &taken.photo_label(), at, HorizontalAlignment::Right, Ink::Black);
 }
 
 fn text_width(font: &FontRenderer, s: &str) -> i32 {
@@ -550,6 +569,24 @@ mod tests {
         assert_eq!(rain_or_uv(&s(0, 6.0)), Some(("UV 6".into(), Ink::Red)));
         assert_eq!(rain_or_uv(&s(0, 5.9)), None);
         assert_eq!(rain_or_uv(&s(20, 9.0)), Some(("20%".into(), Ink::Blue)), "rain wins");
+    }
+
+    #[test]
+    fn photo_date_sits_in_the_top_right_corner_of_its_photo() {
+        let half = (WIDTH - crate::screen::GAP) / 2;
+        let right = Rectangle::new(Point::new((WIDTH - half) as i32, 0), Size::new(half, HEIGHT));
+        for area in [Rectangle::new(Point::zero(), Size::new(WIDTH, HEIGHT)), Rectangle::new(Point::zero(), Size::new(half, HEIGHT)), right] {
+            let mut fb = FrameBuffer::new(Ink::Green);
+            draw_photo_date(&mut fb, &area, Date { year: 2026, month: 11, day: 7 });
+            let corner = photo_date_rect(&area);
+            assert!(corner.top_left.x >= area.top_left.x && corner.bottom_right().unwrap().x < area.top_left.x + area.size.width as i32);
+            assert!(corner.size.width < 150 && corner.size.height < 30, "a small label: {corner:?}");
+            untouched_outside(&fb, &corner);
+            let drawn = |ink| (0..HEIGHT).any(|y| (0..WIDTH).any(|x| fb.get(x, y) == ink));
+            assert!(drawn(Ink::Black) && drawn(Ink::White), "black text with a white outline");
+            // right-aligned to the photo's right edge, at the top
+            assert!(corner.top_left.y < 20 && area.top_left.x + area.size.width as i32 - corner.bottom_right().unwrap().x < 20);
+        }
     }
 
     #[test]
