@@ -46,6 +46,8 @@ struct State {
     stock_next: u8,
     /// Unix time of the last panel refresh.
     last_refresh: Option<i64>,
+    /// A button press was postponed for panel rest (the timer wake carries it out).
+    press_postponed: bool,
 }
 
 impl State {
@@ -61,7 +63,8 @@ impl State {
         let stock_count = nvs.get_u8("stock_n")?.unwrap_or(0);
         let stock_next = nvs.get_u8("stock_next")?.unwrap_or(0);
         let last_refresh = nvs.get_i64("refreshed")?;
-        Ok(State { nvs, target, attempt, last_ap, stock_count, stock_next, last_refresh })
+        let press_postponed = nvs.get_u8("pressed")?.unwrap_or(0) == 1;
+        Ok(State { nvs, target, attempt, last_ap, stock_count, stock_next, last_refresh, press_postponed })
     }
 
     /// Weather + events of the last fetch. NVS spreads its writes over its
@@ -83,6 +86,7 @@ impl State {
         let _ = self.nvs.set_u8("attempt", self.attempt);
         let _ = self.nvs.set_u8("stock_n", self.stock_count);
         let _ = self.nvs.set_u8("stock_next", self.stock_next);
+        let _ = self.nvs.set_u8("pressed", u8::from(self.press_postponed));
         if let Some(t) = self.last_refresh {
             let _ = self.nvs.set_i64("refreshed", t);
         }
@@ -138,8 +142,9 @@ fn run_inner() -> Result<std::convert::Infallible> {
     }
     crate::sleep::spawn_press_listener();
     // audible progress, only when a person pressed the button (06:00 stays quiet)
+    let by_person = schedule::started_by_person(wake == Wake::Button, wake == Wake::Timer, state.press_postponed);
     let progress = |step: &str| {
-        if wake == Wake::Button {
+        if by_person {
             log::info!("progress: {step}");
             crate::board::play(beep::TICK);
         }
@@ -179,12 +184,15 @@ fn run_inner() -> Result<std::convert::Infallible> {
         if let Some(wait) = schedule::panel_rest(now, state.last_refresh) {
             log::info!("panel refreshed {} s ago, updating in {wait} s", schedule::PANEL_REST_SECS - wait as i64);
             state.target = now + wait as i64;
+            // remember that a person asked, so the postponed update still ticks
+            state.press_postponed |= wake == Wake::Button;
             state.save();
             board.led(false);
             deep_sleep(wait, false);
         }
     }
 
+    state.press_postponed = false; // carried out now
     // what this wake has to fetch: nothing, weather+calendar, or also photos
     let stored_info = state.load_info();
     let next_photo = (state.stock_next < state.stock_count)
