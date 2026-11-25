@@ -374,7 +374,12 @@ fn compose(cfg: &Settings, mut fb: FrameBuffer, info: &Info, now: i64, battery_m
     let (today, secs) = tz::to_local(now);
     let now_hm = ((secs / 3600) as u8, (secs % 3600 / 60) as u8);
     let backdrop = if cfg.opacity >= 100 { Backdrop::Solid } else { Backdrop::Clear };
-    let status = format!("{} {:02}:{:02}", cfg.place, now_hm.0, now_hm.1);
+    // sunrise/sunset replace the (static) place name when the weather is known
+    let sun = info.forecast.as_ref().and_then(|f| f.sun_on(today)).map(|s| (s.rise, s.set));
+    let status = match sun {
+        Some(_) => format!("{:02}:{:02}", now_hm.0, now_hm.1),
+        None => format!("{} {:02}:{:02}", cfg.place, now_hm.0, now_hm.1),
+    };
     let agenda = calendar::agenda(info.events.clone(), info.tomorrow.clone(), now_hm);
     draw_weather_box(&mut fb, info.forecast.as_ref().and_then(|f| f.window(now)), backdrop);
     draw_events_box(
@@ -386,6 +391,7 @@ fn compose(cfg: &Settings, mut fb: FrameBuffer, info: &Info, now: i64, battery_m
             battery_pct: battery_mv.map(battery::percent),
             events: agenda.events.as_deref(),
             tomorrow: agenda.tomorrow,
+            sun,
         },
         backdrop,
     );

@@ -57,6 +57,8 @@ pub struct EventsInfo<'a> {
     pub events: Option<&'a [DayEvent]>,
     /// `events` are tomorrow's: the header says "Tomorrow" instead of the date.
     pub tomorrow: bool,
+    /// Sunrise and sunset (local), shown left of `status`.
+    pub sun: Option<((u8, u8), (u8, u8))>,
 }
 
 static TITLE_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB12_tf>();
@@ -194,7 +196,7 @@ pub fn draw_weather_box(fb: &mut FrameBuffer, forecast: Option<&[HourSlot]>, bac
         let at = |y: i32| Point::new(cx, o.y + y);
         let c = HorizontalAlignment::Center;
         pen.text(&mut t, &SMALL_FONT, &hour_label(s.hour), at(HOUR_Y), c, Ink::Black);
-        draw_icon(&mut t, s.icon, at(ICON_CY));
+        draw_icon(&mut t, s.icon, at(ICON_CY), (!s.is_day).then_some(s.moon));
         pen.text(&mut t, &TEMP_FONT, &format!("{}°", s.temp_c.round() as i32), at(TEMP_Y), c, Ink::Black);
         if let Some((label, ink)) = rain_or_uv(s) {
             pen.text(&mut t, &SMALL_FONT, &label, at(RAIN_Y), c, ink);
@@ -225,6 +227,16 @@ pub fn draw_events_box(fb: &mut FrameBuffer, info: &EventsInfo, backdrop: Backdr
         right -= text_width(&SMALL_FONT, &label) + 2;
         house_icon(&mut t, at(right - 9, HEADER_Y + 2), pen.halo);
         right -= 9 + 8;
+    }
+    if let Some((rise, set)) = info.sun {
+        for (time, up) in [(set, false), (rise, true)] {
+            let label = format!("{:02}:{:02}", time.0, time.1);
+            pen.text(&mut t, &SMALL_FONT, &label, at(right, HEADER_Y + 2), HorizontalAlignment::Right, Ink::Black);
+            right -= text_width(&SMALL_FONT, &label) + 2;
+            sun_glyph(&mut t, at(right - 11, HEADER_Y + 2), up, pen.halo);
+            right -= 11 + 6;
+        }
+        right -= 2;
     }
     // status holds the configured place name, which may be Cyrillic or Hebrew
     let status_x = right - mixed_width(info.status);
@@ -285,6 +297,22 @@ fn battery_icon<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point, pct: u8, plate:
     }
 }
 
+/// 11x10 sunrise/sunset glyph: half sun on the horizon with an up/down arrow.
+fn sun_glyph<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point, up: bool, plate: bool) {
+    if plate {
+        let _ = Rectangle::new(p - Point::new(1, 1), Size::new(13, 12)).into_styled(PrimitiveStyle::with_fill(Ink::White)).draw(t);
+    }
+    // half disc above the horizon line
+    let disc = PrimitiveStyleBuilder::new().fill_color(Ink::Yellow).stroke_color(Ink::Red).stroke_width(1).build();
+    let _ = Circle::with_center(p + Point::new(5, 9), 9)
+        .into_styled(disc)
+        .draw(&mut t.clipped(&Rectangle::new(p, Size::new(11, 9))));
+    let _ = Line::new(p + Point::new(0, 9), p + Point::new(10, 9)).into_styled(PrimitiveStyle::with_stroke(Ink::Black, 1)).draw(t);
+    // arrow above the sun
+    let tip = if up { (p + Point::new(5, 0), p + Point::new(2, 3), p + Point::new(8, 3)) } else { (p + Point::new(5, 3), p + Point::new(2, 0), p + Point::new(8, 0)) };
+    let _ = Triangle::new(tip.0, tip.1, tip.2).into_styled(PrimitiveStyle::with_fill(Ink::Black)).draw(t);
+}
+
 /// 9x9 house: roof and walls (room temperature).
 fn house_icon<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point, plate: bool) {
     if plate {
@@ -297,16 +325,23 @@ fn house_icon<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point, plate: bool) {
 }
 
 /// Draws `icon` centred on `center`, inside an `ICON_SIZE` square.
+/// `night` = moon phase: the sun is replaced by the moon.
 /// Shapes are designed on a 40 px grid and scaled to `ICON_SIZE`.
-pub fn draw_icon<D: DrawTarget<Color = Ink>>(target: &mut D, icon: Icon, center: Point) {
+pub fn draw_icon<D: DrawTarget<Color = Ink>>(target: &mut D, icon: Icon, center: Point, night: Option<f32>) {
     let half = (ICON_SIZE / 2) as i32;
     let square = Rectangle::new(center - Point::new(half, half), Size::new(ICON_SIZE, ICON_SIZE));
     let mut t = target.clipped(&square);
     let g = Grid { c: center };
     match icon {
-        Icon::Clear => sun(&mut t, &g, (0, 0), 18),
+        Icon::Clear => match night {
+            Some(phase) => moon(&mut t, &g, (0, 0), 30, phase),
+            None => sun(&mut t, &g, (0, 0), 18),
+        },
         Icon::PartlyCloudy => {
-            sun(&mut t, &g, (8, -8), 13);
+            match night {
+                Some(phase) => moon(&mut t, &g, (8, -8), 20, phase),
+                None => sun(&mut t, &g, (8, -8), 13),
+            }
             cloud(&mut t, &g, (-2, 5));
         }
         Icon::Cloudy => cloud(&mut t, &g, (0, 2)),
@@ -328,7 +363,10 @@ pub fn draw_icon<D: DrawTarget<Color = Ink>>(target: &mut D, icon: Icon, center:
             drops(&mut t, &g, (0, 0));
         }
         Icon::Showers => {
-            sun(&mut t, &g, (9, -9), 12);
+            match night {
+                Some(phase) => moon(&mut t, &g, (9, -9), 18, phase),
+                None => sun(&mut t, &g, (9, -9), 12),
+            }
             cloud(&mut t, &g, (-2, -2));
             drops(&mut t, &g, (-2, 1));
         }
@@ -376,6 +414,26 @@ fn sun<D: DrawTarget<Color = Ink>>(t: &mut D, g: &Grid, at: (i32, i32), d: u32) 
     }
     let disc = PrimitiveStyleBuilder::new().fill_color(Ink::Yellow).stroke_color(Ink::Red).stroke_width(1).build();
     let _ = Circle::with_center(c, g.d(d)).into_styled(disc).draw(t);
+}
+
+/// The moon in its phase: lit part yellow, dark part black, thin outline.
+/// Waxing (phase < 0.5) is lit on the right, waning on the left.
+fn moon<D: DrawTarget<Color = Ink>>(t: &mut D, g: &Grid, at: (i32, i32), d: u32, phase: f32) {
+    let c = g.p(at.0, at.1);
+    let r = g.d(d) as f32 / 2.0;
+    let k = (2.0 * std::f32::consts::PI * phase).cos();
+    let ri = r.ceil() as i32;
+    let pixels = (-ri..=ri).flat_map(|dy| (-ri..=ri).map(move |dx| (dx, dy))).filter_map(|(dx, dy)| {
+        let (x, y) = ((dx as f32 + 0.5) / r, (dy as f32 + 0.5) / r);
+        if x * x + y * y > 1.0 {
+            return None;
+        }
+        let edge = (1.0 - y * y).max(0.0).sqrt();
+        let lit = if phase < 0.5 { x >= k * edge } else { x <= -k * edge };
+        Some(Pixel(c + Point::new(dx, dy), if lit { Ink::Yellow } else { Ink::Black }))
+    });
+    let _ = t.draw_iter(pixels);
+    let _ = Circle::with_center(c, g.d(d) + 1).into_styled(PrimitiveStyle::with_stroke(Ink::Black, 1)).draw(t);
 }
 
 /// A cloud as the union of three puffs and a base, with a black outline:
@@ -436,7 +494,7 @@ mod tests {
 
     fn agenda(ev: Option<&[DayEvent]>) -> FrameBuffer {
         let mut fb = FrameBuffer::new(Ink::Green);
-        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c: None, battery_pct: None, events: ev, tomorrow: false }, Backdrop::Solid);
+        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c: None, battery_pct: None, events: ev, tomorrow: false, sun: None }, Backdrop::Solid);
         fb
     }
 
@@ -566,7 +624,7 @@ mod tests {
         let ev = events(3);
         let mut fb = FrameBuffer::new(Ink::Green);
         draw_weather_box(&mut fb, Some(&s), Backdrop::Clear);
-        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow: false }, Backdrop::Clear);
+        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow: false, sun: None }, Backdrop::Clear);
         for r in [weather_rect(), events_rect()] {
             untouched_outside_both(&fb);
             let (x0, y0) = (r.top_left.x as u32, r.top_left.y as u32);
@@ -593,7 +651,7 @@ mod tests {
 
     fn header(room_c: Option<f32>, battery_pct: Option<u8>) -> FrameBuffer {
         let mut fb = FrameBuffer::new(Ink::Green);
-        let info = EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c, battery_pct, events: Some(&[]), tomorrow: false };
+        let info = EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c, battery_pct, events: Some(&[]), tomorrow: false, sun: None };
         draw_events_box(&mut fb, &info, Backdrop::Solid);
         fb
     }
@@ -618,7 +676,7 @@ mod tests {
         let ev = events(2);
         let draw = |tomorrow| {
             let mut fb = FrameBuffer::new(Ink::Green);
-            let info = EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow };
+            let info = EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow, sun: None };
             draw_events_box(&mut fb, &info, Backdrop::Solid);
             fb
         };
@@ -632,6 +690,48 @@ mod tests {
     fn low_battery_is_red() {
         assert!(header_count(&header(None, Some(10)), Ink::Red) > 3);
         assert_eq!(header_count(&header(None, Some(90)), Ink::Red), 0);
+    }
+
+    fn icon_inks(icon: Icon, night: Option<f32>) -> (usize, usize, usize) {
+        let mut fb = FrameBuffer::new(Ink::White);
+        draw_icon(&mut fb, icon, Point::new(100, 100), night);
+        let count = |ink| (70..130).flat_map(|y| (70..130).map(move |x| (x, y))).filter(|&(x, y)| fb.get(x, y) == ink).count();
+        (count(Ink::Yellow), count(Ink::Red), count(Ink::Black))
+    }
+
+    #[test]
+    fn clear_night_shows_the_moon_not_the_sun() {
+        let (_, red_day, _) = icon_inks(Icon::Clear, None);
+        assert!(red_day > 10, "the sun has red rays");
+        let (yellow, red, _) = icon_inks(Icon::Clear, Some(0.5));
+        assert_eq!(red, 0, "no sun rays at night");
+        assert!(yellow > 100, "full moon");
+        let (_, red, _) = icon_inks(Icon::PartlyCloudy, Some(0.5));
+        assert_eq!(red, 0, "partly cloudy night: moon behind the cloud");
+    }
+
+    #[test]
+    fn moon_shows_its_phase() {
+        let lit = |p| icon_inks(Icon::Clear, Some(p)).0;
+        assert!(lit(0.5) > lit(0.25) + 50, "full > first quarter");
+        assert!(lit(0.25) > lit(0.05) + 50, "first quarter > thin crescent");
+        let (yellow, _, black) = icon_inks(Icon::Clear, Some(0.0));
+        assert!(yellow < 10 && black > 50, "new moon: dark disc, still visible");
+        assert!((lit(0.25) as i32 - lit(0.75) as i32).abs() < 20, "first and last quarter equally lit");
+    }
+
+    #[test]
+    fn header_shows_sunrise_and_sunset() {
+        let draw = |sun| {
+            let mut fb = FrameBuffer::new(Ink::Green);
+            let info = EventsInfo { date: "Wed 25 Nov", status: "19:10", room_c: None, battery_pct: None, events: Some(&[]), tomorrow: false, sun };
+            draw_events_box(&mut fb, &info, Backdrop::Solid);
+            fb
+        };
+        let with = draw(Some(((6, 21), (16, 38))));
+        assert_ne!(with.as_bytes(), draw(None).as_bytes());
+        assert!(header_count(&with, Ink::Yellow) > 5, "small sun glyphs");
+        assert_ne!(with.as_bytes(), draw(Some(((7, 1), (17, 2)))).as_bytes(), "times are drawn");
     }
 
     #[test]
@@ -651,7 +751,7 @@ mod tests {
             Icon::Snow,
         ] {
             let mut fb = FrameBuffer::new(Ink::White);
-            draw_icon(&mut fb, icon, c);
+            draw_icon(&mut fb, icon, c, None);
             let mut drawn = 0;
             for y in 0..200 {
                 for x in 0..200 {

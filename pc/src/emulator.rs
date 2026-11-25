@@ -122,7 +122,12 @@ fn run(o: &Options) -> Result<()> {
     println!("[4/5] Calendar ({})", today.label());
     let events = fetch_calendars(&agent, &cfg, today, now_hm);
 
-    let status = format!("{} {:02}:{:02}", cfg.label(), now_hm.0, now_hm.1);
+    // sunrise/sunset replace the (static) place name when the weather is known
+    let sun = forecast.as_ref().and_then(|f| f.sun_on(today)).map(|s| (s.rise, s.set));
+    let status = match sun {
+        Some(_) => format!("{:02}:{:02}", now_hm.0, now_hm.1),
+        None => format!("{} {:02}:{:02}", cfg.label(), now_hm.0, now_hm.1),
+    };
     draw_weather_box(&mut fb, forecast.as_ref().and_then(|f| f.window(now as i64)), backdrop);
     draw_events_box(&mut fb, &EventsInfo {
             date: &today.label(),
@@ -131,6 +136,7 @@ fn run(o: &Options) -> Result<()> {
             battery_pct: o.battery_pct,
             events: events.events.as_deref(),
             tomorrow: events.tomorrow,
+            sun,
         }, backdrop);
     let png = o.out_dir.join("screen.png");
     to_rgb_image(&fb).save(&png).with_context(|| format!("save {}", png.display()))?;
