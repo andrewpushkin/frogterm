@@ -1,0 +1,5 @@
+[workspace]
+resolver = "2"
+members = ["core", "pc"]
+# firmware/ builds for the ESP32-S3 with the Xtensa toolchain, on its own.
+exclude = ["firmware"]

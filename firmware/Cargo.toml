@@ -1,0 +1,35 @@
+[package]
+name = "frogterm-firmware"
+version = "0.1.0"
+edition = "2021"
+description = "reTerminal E1002 photo + weather + calendar frame firmware (ESP32-S3)"
+
+[[bin]]
+name = "frogterm"
+path = "src/main.rs"
+harness = false
+
+[features]
+default = []
+# Show six colour bars instead of the normal update (panel bring-up).
+bars = []
+
+[dependencies]
+anyhow = "1"
+esp-idf-svc = "0.54"
+frogterm-core = { path = "../core" }
+log = "0.4"
+
+[build-dependencies]
+anyhow = "1"
+embuild = "0.33"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+
+[profile.release]
+opt-level = "s"
+debug = true
+
+[profile.dev]
+opt-level = "z"
+debug = true

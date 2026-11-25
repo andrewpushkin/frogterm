@@ -1,0 +1,38 @@
+//! Settings from `config.toml`, baked in at build time by `build.rs`.
+
+pub struct Settings {
+    pub album_url: &'static str,
+    pub city: &'static str,
+    /// Label in the events box header.
+    pub place: &'static str,
+    pub coords: Option<(f64, f64)>,
+    pub calendars: Vec<&'static str>,
+    pub opacity: u8,
+    pub wifi_ssid: &'static str,
+    pub wifi_password: &'static str,
+    pub update_hour: u8,
+    pub photo_batch: u8,
+    pub refresh_minutes: u32,
+}
+
+pub fn settings() -> Settings {
+    let num = |s: &str| s.parse::<f64>().ok();
+    Settings {
+        album_url: env!("FT_ALBUM_URL"),
+        city: env!("FT_CITY"),
+        place: env!("FT_PLACE"),
+        coords: num(env!("FT_LAT")).zip(num(env!("FT_LON"))),
+        calendars: env!("FT_CALENDARS").split("\\n").filter(|s| !s.is_empty()).collect(),
+        opacity: env!("FT_OPACITY").parse().unwrap_or(50),
+        wifi_ssid: env!("FT_WIFI_SSID"),
+        wifi_password: env!("FT_WIFI_PASSWORD"),
+        update_hour: env!("FT_UPDATE_HOUR").parse().unwrap_or(6),
+        photo_batch: env!("FT_PHOTO_BATCH").parse().unwrap_or(10),
+        refresh_minutes: env!("FT_REFRESH_MINUTES").parse().unwrap_or(480),
+    }
+}
+
+/// Host part of a URL, for logs (links contain secrets).
+pub fn host(url: &str) -> &str {
+    url.split('/').nth(2).unwrap_or("?")
+}

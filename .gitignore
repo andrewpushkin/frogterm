@@ -1,0 +1,8 @@
+# build output and caches
+target/
+build/
+out/
+.cargo-docker/
+
+# secrets: Wi-Fi password and album link
+/config.toml

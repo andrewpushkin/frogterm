@@ -1,0 +1,3 @@
+# Nothing is copied into the image; keep the build context tiny.
+*
+!Dockerfile

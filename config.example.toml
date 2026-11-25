@@ -1,0 +1,55 @@
+# frogterm demo configuration.
+#
+#   cp config.example.toml config.toml     # then put your real values in config.toml
+#
+# config.toml is gitignored: it is the ONLY place for your private data (album
+# link, calendar links, Wi-Fi password). The firmware has it baked in at build
+# time, so after changing it run `make flash` again.
+# README.md, section "Where to get your real data", explains every value.
+
+# --- Photos -------------------------------------------------------------------
+
+# Google Photos album shared as "anyone with the link" (no password needed).
+album_url = "https://photos.app.goo.gl/XXXXXXXXXXXXXXXXX"
+
+# --- Weather (Open-Meteo, free, no key) -----------------------------------------
+
+# City looked up by name.
+city = "Tel Aviv"
+
+# Optional: label in the events box header (default: city).
+# place_name = "Tel Aviv"
+
+# Optional: exact point instead of the city centre (set both or neither).
+# latitude = 32.0853
+# longitude = 34.7818
+
+# --- Calendars (today's events, or tomorrow's when today is done) ---------------
+
+# Optional, merged. Your own calendars: "Secret address in iCal format" (it
+# works like a password). Public calendars, like holidays, use their public
+# address - this one works as is:
+calendars = [
+  # "https://calendar.google.com/calendar/ical/XXXX%40group.calendar.google.com/private-XXXX/basic.ics",
+  "https://calendar.google.com/calendar/ical/en.jewish%23holiday%40group.v.calendar.google.com/public/basic.ics",
+]
+
+# --- Look ----------------------------------------------------------------------
+
+# Boxes over the photo: 100 = solid white, lower = the photo shows through
+# (lightened by this percentage), 0 = fully transparent. Default 50.
+# overlay_opacity = 50
+
+# --- Device only (the PC emulator ignores these) -------------------------------
+
+wifi_ssid = "your-wifi-name"
+wifi_password = "your-wifi-password"
+
+# Local hour of the daily update (Israel time). Default 6.
+# update_hour = 6
+
+# Photos downloaded per Wi-Fi batch and kept in flash (1..20). Default 10.
+# photo_batch = 10
+
+# Weather/calendar younger than this are reused without Wi-Fi (max 1080). Default 480 (8 h).
+# refresh_minutes = 480
