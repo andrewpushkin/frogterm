@@ -4,7 +4,8 @@ Firmware for a Seeed **reTerminal E1002** (ESP32-S3, 7.3" six-colour E Ink
 Spectra 6 panel) that turns it into a family photo frame:
 
 - a random photo from a **Google Photos** album (portrait photos come in pairs,
-  one of them from the newest 300),
+  one of them from the newest 300), with the date it was taken in its
+  top-right corner,
 - **today's events** from Google Calendar (tomorrow's once today is done),
 - the **weather** for the next 6 hours (rain chance, or the UV index when high),
 - **room temperature** and **battery level**.

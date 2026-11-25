@@ -16,7 +16,7 @@ use frogterm_core::framebuf::{FrameBuffer, Ink, HEIGHT, WIDTH};
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
 use frogterm_core::date::Date;
 use frogterm_core::tz;
-use frogterm_core::layout::{draw_events_box, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
+use frogterm_core::layout::{draw_events_box, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
 use frogterm_core::screen::{self, Slot};
 use frogterm_core::weather::{self, Forecast};
 use rand::rngs::StdRng;
@@ -225,13 +225,17 @@ fn fill_slots(
             }
         }
         dither_area(&rgb, &s.area, fb).map_err(|e| (s.photo, e))?;
+        if let Some(taken) = p.taken {
+            draw_photo_date(fb, &s.area, taken);
+        }
         println!(
-            "      photo #{} of {} ({}x{} {}): {} KB {} JPEG as {w}x{h} at x={}, {:.1} s",
+            "      photo #{} of {} ({}x{} {}, taken {}): {} KB {} JPEG as {w}x{h} at x={}, {:.1} s",
             s.photo,
             list.photos.len(),
             p.width,
             p.height,
             if p.is_tall() { "tall" } else { "wide" },
+            p.taken.map_or("?".to_string(), |d| d.iso()),
             jpeg.bytes.len() / 1024,
             if jpeg.progressive { "progressive" } else { "baseline" },
             s.area.top_left.x,

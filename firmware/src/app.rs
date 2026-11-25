@@ -10,7 +10,7 @@ use frogterm_core::album::{self, Photo};
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
 use frogterm_core::dither::{dither_area, veil};
 use frogterm_core::framebuf::{FrameBuffer, Ink};
-use frogterm_core::layout::{draw_events_box, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
+use frogterm_core::layout::{draw_events_box, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
 use frogterm_core::photo_list::{after_refresh, PhotoList};
 use frogterm_core::info::Info;
 use frogterm_core::schedule::{self, UpdatePlan, WakePlan};
@@ -573,10 +573,10 @@ fn random_screen(list: &mut PhotoList, store: &mut Store, opacity: u8, now: i64)
                     let photo = &list.photos[s.photo];
                     let (w, h, idx) = (s.area.size.width, s.area.size.height, s.photo);
                     let url = photo.sized_url(w, h);
-                    let (pw, ph) = (photo.width, photo.height);
+                    let (pw, ph, taken) = (photo.width, photo.height, photo.taken);
                     std::thread::Builder::new().name("photo".into()).stack_size(BG_STACK).spawn_scoped(sc, move || {
                         let bytes = net::get_bytes(&url).with_context(|| format!("photo #{idx}"))?;
-                        log::info!("photo #{idx} ({pw}x{ph}) as {w}x{h}, {} KB", bytes.len() / 1024);
+                        log::info!("photo #{idx} ({pw}x{ph}, taken {taken:?}) as {w}x{h}, {} KB", bytes.len() / 1024);
                         jpeg::decode_rgb(&bytes, w, h)
                     })
                 })
@@ -598,7 +598,11 @@ fn random_screen(list: &mut PhotoList, store: &mut Store, opacity: u8, now: i64)
                     veil(&mut rgb, &s.area, &boxed, opacity);
                 }
             }
-            dither_area(&rgb, &s.area, &mut fb)
+            dither_area(&rgb, &s.area, &mut fb)?;
+            if let Some(taken) = list.photos[s.photo].taken {
+                draw_photo_date(&mut fb, &s.area, taken);
+            }
+            Ok(())
         });
         match filled {
             Ok(()) => return Ok(fb),
