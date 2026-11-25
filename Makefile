@@ -8,12 +8,14 @@ CONFIG ?= config.toml
 TTY    := $(shell [ -t 0 ] && echo -t)
 
 # Run as the host user so build output stays yours; caches live in the repo (gitignored).
-DOCKER := docker run --rm -i $(TTY) --init \
+DOCKER_RUN := docker run --rm -i $(TTY) --init \
 	-v "$(CURDIR)":/work -w /work \
 	-u $(shell id -u):$(shell id -g) -e HOME=/tmp \
 	-e CARGO_HOME=/work/.cargo-docker \
-	-e CARGO_TARGET_DIR=/work/build/target \
-	$(IMAGE)
+	-e CARGO_TARGET_DIR=/work/build/target
+DOCKER := $(DOCKER_RUN) $(IMAGE)
+# ...with the X server of WSLg / the Linux desktop, for the emulator window
+DOCKER_X11 := $(DOCKER_RUN) -e DISPLAY=$(DISPLAY) -v /tmp/.X11-unix:/tmp/.X11-unix $(IMAGE)
 
 PC := cargo run --release -q -p frogterm-pc --
 
@@ -69,12 +71,11 @@ build/.image-stamp: Dockerfile
 tests: image
 	$(DOCKER) cargo test --workspace
 
-# One device update on the PC: random photo(s) + weather + calendar -> out/screen.png
+# The device on the PC (the firmware's wake logic) in a window with its three
+# buttons; out/ is its flash. ARGS=--once: no window, one wake -> out/screen.png
 emulator: image
 	@test -f "$(CONFIG)" || { echo "$(CONFIG) not found: cp config.example.toml config.toml and edit it"; exit 2; }
-	$(DOCKER) $(PC) emulator --config "$(CONFIG)" --out out $(ARGS)
-	@if command -v explorer.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then \
-		explorer.exe "$$(wslpath -w out/screen.png)" || true; fi
+	$(DOCKER_X11) $(PC) emulator --config "$(CONFIG)" --out out $(ARGS)
 
 # Check the Google album: ALBUM=<link>, or album_url from $(CONFIG)
 pc-check: image
@@ -88,7 +89,8 @@ help:
 	@echo "make flash      flash the reTerminal [USBIPD_BUSID=<id>] [PORT=/dev/ttyACM0] [FEATURES=bars]"
 	@echo "make monitor    serial log of the reTerminal"
 	@echo "make tests      run all unit tests"
-	@echo "make emulator   one device update on the PC -> out/screen.png"
-	@echo "                (ARGS=--refresh re-reads the whole album)"
+	@echo "make emulator   the device in a window: click its 3 buttons (flash in out/)"
+	@echo "                [ARGS=--no-rest] no panel rest between refreshes"
+	@echo "                [ARGS='--once next'] no window: one wake (green|next|previous) -> out/screen.png"
 	@echo "make pc-check   check the Google album [ALBUM=<link>] [ARGS='--index 3']"
 	@echo "make clean      remove build output and caches"

@@ -51,4 +51,10 @@ RUN printf '%s\n' '#!/bin/sh' \
  && chmod -R a+rX /opt
 ENTRYPOINT ["/opt/entrypoint.sh"]
 
+# X11 client libraries for the emulator window (shown by WSLg or the Linux
+# desktop). A layer of its own, so adding it did not rebuild the toolchains.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libx11-6 libxcursor1 \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /work

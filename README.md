@@ -103,10 +103,27 @@ comments in `config.example.toml`.
 ## Try it on the PC first
 
 ```sh
-make emulator     # one update -> out/screen.png (opens in Windows)
+make emulator     # the device in a window, with its three buttons to click
 make emulator ARGS="--room 22 --battery 90 --seed 3"   # preview the header, fixed photos
+make emulator ARGS=--no-rest       # no e-paper rest between refreshes
+make emulator ARGS="--once next"   # no window: one wake (green|next|previous) -> out/screen.png
 make pc-check     # the Google album works without a login?
 make tests        # all unit tests
+```
+
+The emulator runs the firmware's own wake logic (`core/src/app.rs`): click
+**< Previous**, **Update** (the green button) and **Next >** (or press
+Left / Space / Right) and it does exactly what the device does — stored
+photos, batches, the panel's rest between refreshes, the 06:00 timer wake.
+`out/` is its flash (stored screens, weather/calendar, state); delete it for
+a factory-fresh device. The window shows the LED (on while awake) and the
+last log line; the full log is in the terminal.
+
+In WSL the window appears through WSLg. On Windows itself (no Docker), with
+[Rust](https://rustup.rs) installed:
+
+```powershell
+cargo run --release -p frogterm-pc -- emulator
 ```
 
 ## Build and flash
@@ -154,9 +171,9 @@ make flash FEATURES=bars          # test build: six colour bars only
 - `core/` — everything testable on a PC that also runs on the ESP32: Google
   album reading, dithering to the six inks, layout and fonts (Latin, Cyrillic,
   Hebrew right-to-left), weather, iCal calendar, Israel time zone, schedule,
-  panel protocol.
-- `pc/` — the emulator and the album check.
-- `firmware/` — wires `core` to the hardware with `esp-idf-svc`: e-paper on
+  panel protocol, and what one wake does (`app.rs`, behind a `Device` trait).
+- `pc/` — the emulator (a PC `Device` in a window) and the album check.
+- `firmware/` — the reTerminal `Device`, with `esp-idf-svc`: e-paper on
   SPI, RTC and temperature sensor on I2C, buzzer, battery, Wi-Fi, HTTPS,
   flash storage, deep sleep.
 - `docs/superpowers/` — design and implementation plan.
