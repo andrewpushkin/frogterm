@@ -119,6 +119,9 @@ fn run_inner() -> Result<std::convert::Infallible> {
     let sysloop = EspSystemEventLoop::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;
     let cfg = settings();
+    if let Some(zone) = tz::Zone::parse(cfg.timezone) {
+        tz::set_zone(zone);
+    }
     let mut state = State::load(nvs_part.clone())?;
     let mut rtc = Rtc::new(p.i2c0, p.pins.gpio19, p.pins.gpio20)?;
     let rtc_now = rtc.read().unwrap_or_else(|e| {
@@ -202,7 +205,8 @@ fn run_inner() -> Result<std::convert::Infallible> {
             }
             state.save();
             board.led(false);
-            deep_sleep(wait, false);
+            // buttons stay active: a press chirps and replaces the postponed action
+            deep_sleep(wait, schedule::arm_button(button_held()));
         }
     }
 

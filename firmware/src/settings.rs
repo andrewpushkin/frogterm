@@ -13,6 +13,8 @@ pub struct Settings {
     pub update_hour: u8,
     pub photo_batch: u8,
     pub refresh_minutes: u32,
+    /// POSIX TZ string (validated at build time).
+    pub timezone: &'static str,
 }
 
 pub fn settings() -> Settings {
@@ -29,6 +31,7 @@ pub fn settings() -> Settings {
         update_hour: env!("FT_UPDATE_HOUR").parse().unwrap_or(6),
         photo_batch: env!("FT_PHOTO_BATCH").parse().unwrap_or(10),
         refresh_minutes: env!("FT_REFRESH_MINUTES").parse().unwrap_or(480),
+        timezone: env!("FT_TIMEZONE"),
     }
 }
 

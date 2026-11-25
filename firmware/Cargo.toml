@@ -23,6 +23,7 @@ log = "0.4"
 
 [build-dependencies]
 anyhow = "1"
+frogterm-core = { path = "../core" }
 embuild = "0.33"
 serde = { version = "1", features = ["derive"] }
 toml = "1"

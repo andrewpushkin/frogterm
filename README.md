@@ -83,6 +83,13 @@ Weather comes from [Open-Meteo](https://open-meteo.com) (free, no key).
 `longitude`: in Google Maps right-click the place — the first menu line is
 `latitude, longitude`. `place_name` is the label shown on the screen.
 
+### Time zone: `timezone`
+
+A POSIX TZ string; the default is Israel, `IST-2IDT,M3.4.4/26,M10.5.0`
+(UTC+2, summer time UTC+3 from the Friday before the last Sunday of March to
+the last Sunday of October). The device sets its clock from the internet on
+every Wi-Fi connection; this string only turns UTC into local time.
+
 ### Wi-Fi: `wifi_ssid`, `wifi_password`
 
 Your 2.4 GHz network (the ESP32 has no 5 GHz). WPA2 or open.

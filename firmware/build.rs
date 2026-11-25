@@ -27,6 +27,7 @@ fn main() -> anyhow::Result<()> {
         ("FT_UPDATE_HOUR", c.update_hour.to_string()),
         ("FT_PHOTO_BATCH", c.photo_batch.to_string()),
         ("FT_REFRESH_MINUTES", c.refresh_minutes.to_string()),
+        ("FT_TIMEZONE", c.timezone.clone()),
     ] {
         // newlines are not allowed in rustc-env values: escape them
         println!("cargo:rustc-env={k}={}", v.replace('\n', "\\n"));

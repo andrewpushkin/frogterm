@@ -77,6 +77,7 @@ pub fn main(args: &[String]) -> Result<()> {
 
 fn run(o: &Options) -> Result<()> {
     let cfg = Config::load(&o.config)?;
+    tz::set_zone(cfg.zone());
     let opacity = o.opacity.unwrap_or(cfg.overlay_opacity);
     let backdrop = if opacity >= 100 { Backdrop::Solid } else { Backdrop::Clear };
     let mut rng: StdRng = match o.seed {

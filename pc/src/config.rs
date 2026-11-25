@@ -41,6 +41,13 @@ pub struct Config {
     /// younger ones are reused without Wi-Fi (default 480 = 8 h, max 1080).
     #[serde(default = "eight_hours")]
     pub refresh_minutes: u32,
+    /// Local time zone as a POSIX TZ string (default: Israel).
+    #[serde(default = "israel")]
+    pub timezone: String,
+}
+
+fn israel() -> String {
+    frogterm_core::tz::ISRAEL.to_string()
 }
 
 fn ten() -> u8 {
@@ -71,6 +78,12 @@ impl Config {
         if let Some(bad) = c.calendars.iter().find(|u| !u.starts_with("https://")) {
             bail!("calendar links must be https://, got {bad:?}");
         }
+        if frogterm_core::tz::Zone::parse(&c.timezone).is_none() {
+            bail!(
+                "timezone must be a POSIX TZ string like \"IST-2IDT,M3.4.4/26,M10.5.0\" (Israel), got {:?}",
+                c.timezone
+            );
+        }
         if !(1..=20).contains(&c.photo_batch) {
             bail!("photo_batch must be 1..=20 (screens that fit in flash), got {}", c.photo_batch);
         }
@@ -99,6 +112,11 @@ impl Config {
     /// Name shown in the weather box.
     pub fn label(&self) -> &str {
         self.place_name.as_deref().unwrap_or(&self.city)
+    }
+
+    /// The configured time zone (validated in `parse`).
+    pub fn zone(&self) -> frogterm_core::tz::Zone {
+        frogterm_core::tz::Zone::parse(&self.timezone).expect("validated when parsed")
     }
 
     /// Fixed coordinates, if the config pins them.
@@ -186,6 +204,16 @@ mod tests {
         let c = Config::parse(include_str!("../../config.example.toml")).expect("config.example.toml must parse");
         assert_eq!(c.calendars.len(), 1, "the public holidays calendar");
         assert!(c.wifi_ssid.is_some());
+    }
+
+    #[test]
+    fn timezone_defaults_to_israel_and_must_be_posix() {
+        let base = "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\n";
+        assert_eq!(Config::parse(base).unwrap().timezone, "IST-2IDT,M3.4.4/26,M10.5.0");
+        let c = Config::parse(&format!("{base}timezone = \"CET-1CEST,M3.5.0,M10.5.0/3\"\n")).unwrap();
+        assert_eq!(c.zone().std_offset, 3600);
+        let e = Config::parse(&format!("{base}timezone = \"Asia/Jerusalem\"\n")).unwrap_err();
+        assert!(format!("{e:#}").contains("POSIX"), "{e:#}");
     }
 
     #[test]

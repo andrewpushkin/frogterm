@@ -12,6 +12,13 @@
 # Google Photos album shared as "anyone with the link" (no password needed).
 album_url = "https://photos.app.goo.gl/XXXXXXXXXXXXXXXXX"
 
+# --- Time zone -------------------------------------------------------------------
+
+# Local time zone as a POSIX TZ string. Default: Israel, with its summer time
+# (Friday before the last Sunday of March until the last Sunday of October).
+# Others: "CET-1CEST,M3.5.0,M10.5.0/3" (Central Europe), "GMT0BST,M3.5.0/1,M10.5.0" (UK).
+timezone = "IST-2IDT,M3.4.4/26,M10.5.0"
+
 # --- Weather (Open-Meteo, free, no key) -----------------------------------------
 
 # City looked up by name.
@@ -45,7 +52,7 @@ calendars = [
 wifi_ssid = "your-wifi-name"
 wifi_password = "your-wifi-password"
 
-# Local hour of the daily update (Israel time). Default 6.
+# Local hour of the daily update. Default 6.
 # update_hour = 6
 
 # Photos downloaded per Wi-Fi batch and kept in flash (1..20). Default 10.
