@@ -8,6 +8,10 @@ pub struct Tone {
 }
 
 pub const SUCCESS: &[Tone] = &[Tone { hz: 2000, ms: 150 }];
+/// Progress tick at each step of a button-started update (Wi-Fi up,
+/// downloads done, screen drawing).
+pub const TICK: &[Tone] = &[Tone { hz: 1200, ms: 30 }];
+
 /// Short chirp: "I saw the button press" (right after the button wakes the device).
 pub const PRESS: &[Tone] = &[Tone { hz: 3000, ms: 50 }];
 pub const ERROR: &[Tone] = &[
@@ -34,6 +38,16 @@ mod tests {
         assert!(PRESS[0].hz > SUCCESS[0].hz, "higher than the 'done' beep");
         assert_ne!(PRESS, SUCCESS);
         assert_ne!(PRESS, ERROR);
+    }
+
+    #[test]
+    fn tick_is_short_low_and_unlike_the_other_sounds() {
+        assert_eq!(TICK.len(), 1);
+        assert!(TICK[0].ms <= 30, "very short");
+        assert!(TICK[0].hz < SUCCESS[0].hz && TICK[0].hz < PRESS[0].hz, "lower than done/press");
+        for other in [SUCCESS, PRESS, ERROR] {
+            assert_ne!(TICK, other);
+        }
     }
 
     #[test]

@@ -137,6 +137,13 @@ fn run_inner() -> Result<std::convert::Infallible> {
         board.beep(beep::PRESS); // "I saw the press"
     }
     crate::sleep::spawn_press_listener();
+    // audible progress, only when a person pressed the button (06:00 stays quiet)
+    let progress = |step: &str| {
+        if wake == Wake::Button {
+            log::info!("progress: {step}");
+            crate::board::play(beep::TICK);
+        }
+    };
     board.led(true);
     // watchdog: never stay awake (battery) if anything hangs
     std::thread::spawn(|| {
@@ -212,6 +219,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
                     None
                 };
                 let mut net = Net::connect(p.modem, sysloop, nvs_part, cfg.wifi_ssid, cfg.wifi_password, state.last_ap)?;
+                progress("Wi-Fi up");
                 if net.joined.is_some() {
                     state.last_ap = net.joined;
                 }
@@ -229,6 +237,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
                     None => log::info!("NTP not done yet, RTC kept as is"),
                 }
                 net.stop();
+                progress("downloads done");
                 (now, info, batch)
             }
         };
@@ -265,6 +274,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
         state.stock_next = state.stock_next.saturating_add(1).min(state.stock_count);
 
         let fb = compose(&cfg, photo, &info, now, battery_mv, room.map(|r| r.0));
+        progress("drawing the screen");
         epd.show(&fb)?;
         state.last_refresh = Some(now);
         Ok(Some(now))
