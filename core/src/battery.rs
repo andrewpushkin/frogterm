@@ -3,8 +3,9 @@
 /// Approximate charge in percent for a cell voltage in millivolts.
 pub fn percent(mv: u32) -> u8 {
     // (mV, %) - Seeed's calibration for the reTerminal E-series (ESPHome
-    // cookbook), measured the same way (ADC1 GPIO1 x2). A full battery reads
-    // ~4.1 V here, not 4.2 V.
+    // cookbook), measured the same way (ADC1 GPIO1 x2), except the top point:
+    // Seeed uses 4.15 V = 100 %, but a fully charged battery reads 4.08-4.09 V
+    // on this board, so 4.08 V = 100 %.
     const CURVE: [(u32, u32); 12] = [
         (3270, 0),
         (3300, 5),
@@ -17,7 +18,7 @@ pub fn percent(mv: u32) -> u8 {
         (3850, 70),
         (3910, 80),
         (3960, 90),
-        (4150, 100),
+        (4080, 100),
     ];
     if mv <= CURVE[0].0 {
         return 0;
@@ -45,13 +46,14 @@ mod tests {
     #[test]
     fn battery_percent_follows_seeeds_calibration() {
         // Seeed's reTerminal E-series table (ESPHome cookbook, same ADC x2 measurement)
-        assert_eq!(percent(4150), 100);
         assert_eq!(percent(3960), 90);
         assert_eq!(percent(3750), 50);
         assert_eq!(percent(3490), 20);
         assert_eq!(percent(3270), 0);
-        // a full battery on the charger reads ~4.08-4.11 V on this board
-        assert_eq!(percent(4082), 96);
+        // a full battery reads 4.082-4.088 V on this board after hours on the
+        // charger: that is 100 %
+        assert_eq!(percent(4082), 100);
+        assert_eq!(percent(4020), 95);
         assert_eq!(percent(4200), 100);
         assert_eq!(percent(5000), 100);
         assert_eq!(percent(3000), 0);
