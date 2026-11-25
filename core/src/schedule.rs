@@ -70,11 +70,12 @@ pub enum UpdatePlan {
     Offline,
     /// Fresh weather/calendar, stored photo.
     RefreshInfo,
-    /// Fresh weather/calendar and a new batch of photos (stock is empty).
+    /// Fresh weather/calendar and a new batch of photos (every stored one was seen).
     RefreshAll,
 }
 
-/// `info` = (fetch time, local date of its events) of the stored weather/calendar.
+/// `info` = (fetch time, local date of its events) of the stored weather/calendar;
+/// `photos_left` = stored photos not seen yet.
 pub fn plan_update(now: i64, info: Option<(i64, Date)>, photos_left: usize, max_age_secs: i64) -> UpdatePlan {
     if photos_left == 0 {
         return UpdatePlan::RefreshAll;

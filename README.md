@@ -135,13 +135,17 @@ make flash FEATURES=bars          # test build: six colour bars only
 | one beep | update finished |
 | three low beeps | update failed (retried in 30 min, up to 3 times) |
 
-- **Green button**: new photo. Presses during an update chirp and are ignored.
-  The panel rests at least 180 s between refreshes (E Ink care); an earlier
-  press is carried out automatically when it may.
+- **Green button**: a stored photo not seen yet; once every stored photo has
+  been on the screen, a new batch is downloaded. The 06:00 update does the
+  same. Presses during an update chirp and are ignored. The panel rests
+  between refreshes (E Ink care); an earlier press is carried out
+  automatically when it may.
+- **Side buttons**: previous / next stored photo, no Wi-Fi. Photos seen this
+  way count as seen.
 - **No Wi-Fi most of the time**: the device keeps a batch of 10 ready-to-show
   photos in flash. A wake within 8 h of the last weather/calendar fetch (same
-  day) shows the next stored photo without Wi-Fi (~1.6 s awake). Older data is
-  fetched again; when the stock is used up, a new batch is downloaded.
+  day) shows a stored photo without Wi-Fi (~1.6 s awake). Older data is
+  fetched again; when all stored photos were seen, a new batch is downloaded.
 - **Battery**: a refresh is skipped below 3.45 V (no half-drawn screens).
 
 ## How it works

@@ -1,6 +1,7 @@
 //! The three top buttons (active low, all can wake the chip from deep sleep).
 
-/// Green button: next new photo (and Wi-Fi when needed).
+/// Green button: a stored photo not seen yet, or a new batch once all were
+/// seen (and Wi-Fi when needed).
 pub const GREEN_GPIO: u32 = 3;
 /// Side buttons: browse the stored photos without Wi-Fi. Checked on the
 /// device: the left button is GPIO4, the right one GPIO5.

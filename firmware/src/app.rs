@@ -16,7 +16,7 @@ use frogterm_core::info::Info;
 use frogterm_core::schedule::{self, UpdatePlan, WakePlan};
 use frogterm_core::weather::{self, Forecast};
 use frogterm_core::buttons::{self, Press};
-use frogterm_core::{battery, beep, jpeg, screen, tz};
+use frogterm_core::{battery, beep, jpeg, screen, stock, tz};
 
 use crate::board::Board;
 use crate::epd::Epd;
@@ -42,9 +42,9 @@ struct State {
     attempt: u8,
     /// Last access point joined (BSSID, channel).
     last_ap: Option<([u8; 6], u8)>,
-    /// Photo screens stored in flash, and the next one to show.
+    /// Photo screens stored in flash, and which of them were on the panel.
     stock_count: u8,
-    stock_next: u8,
+    seen: stock::Seen,
     /// Unix time of the last panel refresh.
     last_refresh: Option<i64>,
     /// A button press postponed for panel rest (the timer wake carries it out).
@@ -64,11 +64,15 @@ impl State {
             _ => None,
         };
         let stock_count = nvs.get_u8("stock_n")?.unwrap_or(0);
-        let stock_next = nvs.get_u8("stock_next")?.unwrap_or(0);
+        // older firmware kept a counter: photos 0..stock_next were shown
+        let seen = match nvs.get_u32("seen")? {
+            Some(s) => s,
+            None => stock::from_counter(nvs.get_u8("stock_next")?.unwrap_or(0)),
+        };
         let last_refresh = nvs.get_i64("refreshed")?;
         let postponed = Press::from_code(nvs.get_u8("pressed")?.unwrap_or(0));
         let current = nvs.get_u8("current")?.unwrap_or(0);
-        Ok(State { nvs, target, attempt, last_ap, stock_count, stock_next, last_refresh, postponed, current })
+        Ok(State { nvs, target, attempt, last_ap, stock_count, seen, last_refresh, postponed, current })
     }
 
     /// Weather + events of the last fetch. NVS spreads its writes over its
@@ -89,7 +93,7 @@ impl State {
         let _ = self.nvs.set_i64("target", self.target);
         let _ = self.nvs.set_u8("attempt", self.attempt);
         let _ = self.nvs.set_u8("stock_n", self.stock_count);
-        let _ = self.nvs.set_u8("stock_next", self.stock_next);
+        let _ = self.nvs.set_u32("seen", self.seen);
         let _ = self.nvs.set_u8("pressed", self.postponed.map_or(0, Press::code));
         let _ = self.nvs.set_u8("current", self.current);
         if let Some(t) = self.last_refresh {
@@ -234,6 +238,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
             progress("drawing the screen");
             epd.show(&fb)?;
             state.current = slot;
+            state.seen = stock::mark(state.seen, slot);
             state.last_refresh = Some(now);
             Ok(())
         })();
@@ -248,12 +253,12 @@ fn run_inner() -> Result<std::convert::Infallible> {
         sleep_until_next(&mut state, now, cfg.update_hour);
     }
 
-    // green button / timer: what this wake has to fetch: nothing,
+    // green button / timer: a stored photo not seen yet; once all were seen
+    // (also by browsing), a new batch. What this wake has to fetch: nothing,
     // weather+calendar, or also photos
-    let next_photo = (state.stock_next < state.stock_count)
-        .then(|| Store.load_screen(state.stock_next as usize))
-        .flatten();
-    let photos_left = if next_photo.is_some() { (state.stock_count - state.stock_next) as usize } else { 0 };
+    let unseen_slot = stock::next_unseen(state.seen, state.stock_count, state.current);
+    let next_photo = unseen_slot.and_then(|slot| Store.load_screen(slot as usize).map(|fb| (slot, fb)));
+    let photos_left = if next_photo.is_some() { stock::unseen(state.seen, state.stock_count) } else { 0 };
     let plan = match rtc_now {
         Some(now) => schedule::plan_update(
             now,
@@ -264,7 +269,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
         None if photos_left == 0 => UpdatePlan::RefreshAll,
         None => UpdatePlan::RefreshInfo,
     };
-    log::info!("plan {plan:?}: {photos_left} stored photos left");
+    log::info!("plan {plan:?}: {photos_left} of {} stored photos not seen yet", state.stock_count);
 
     let result = (|| -> Result<Option<i64>> {
         let (now, info, batch) = match plan {
@@ -325,22 +330,22 @@ fn run_inner() -> Result<std::convert::Infallible> {
                 if saved > 0 {
                     log::info!("stored a new batch of {saved} photos");
                     state.stock_count = saved;
-                    state.stock_next = 0;
                 } else if state.stock_count > 0 {
                     log::warn!("no new photos, showing the stored ones again");
-                    state.stock_next = 0;
                 }
-                batch.into_iter().next().or_else(|| Store.load_screen(state.stock_next as usize))
+                state.seen = 0;
+                batch.into_iter().next().or_else(|| Store.load_screen(0)).map(|fb| (0, fb))
             }
             None => next_photo,
         };
-        let photo = photo.ok_or_else(|| anyhow!("no photo to show"))?;
-        state.current = state.stock_next.min(state.stock_count.saturating_sub(1));
-        state.stock_next = state.stock_next.saturating_add(1).min(state.stock_count);
+        let (slot, photo) = photo.ok_or_else(|| anyhow!("no photo to show"))?;
+        log::info!("showing stored photo {slot} of {}", state.stock_count);
 
         let fb = compose(&cfg, photo, &info, now, battery_mv, room.map(|r| r.0));
         progress("drawing the screen");
         epd.show(&fb)?;
+        state.current = slot;
+        state.seen = stock::mark(state.seen, slot);
         state.last_refresh = Some(now);
         Ok(Some(now))
     })();
