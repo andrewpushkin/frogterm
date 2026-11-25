@@ -48,8 +48,33 @@ impl Date {
     /// e.g. "Wed 25 Nov".
     pub fn label(self) -> String {
         const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        format!("{} {} {}", DAYS[usize::from(self.weekday())], self.day, self.month_name())
+    }
+
+    /// When a photo was taken, e.g. "7 Nov 2026".
+    pub fn photo_label(self) -> String {
+        format!("{} {} {}", self.day, self.month_name(), self.year)
+    }
+
+    fn month_name(self) -> &'static str {
         const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        format!("{} {} {}", DAYS[usize::from(self.weekday())], self.day, MONTHS[usize::from(self.month - 1)])
+        MONTHS[usize::from(self.month.clamp(1, 12) - 1)]
+    }
+
+    /// "2026-11-07".
+    pub fn iso(self) -> String {
+        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
+    }
+
+    /// Inverse of `iso`; `None` for anything that is not a real date.
+    pub fn parse_iso(s: &str) -> Option<Date> {
+        let mut f = s.splitn(3, '-');
+        let year = f.next()?.parse().ok()?;
+        let month = f.next()?.parse().ok()?;
+        let day = f.next()?.parse().ok()?;
+        let date = Date { year, month, day };
+        // round trip rejects 13th months, 32nd days, 30 Feb …
+        (Date::from_days(date.days_since_epoch()) == date && (1..=12).contains(&month)).then_some(date)
     }
 }
 
@@ -83,5 +108,20 @@ mod tests {
         assert_eq!(d(1970, 1, 1).weekday(), 3, "Thursday");
         assert_eq!(d(2026, 11, 25).label(), "Wed 25 Nov");
         assert_eq!(d(2027, 1, 3).label(), "Sun 3 Jan");
+    }
+
+    #[test]
+    fn photo_label_has_the_year() {
+        assert_eq!(d(2026, 11, 7).photo_label(), "7 Nov 2026");
+        assert_eq!(d(2019, 1, 23).photo_label(), "23 Jan 2019");
+    }
+
+    #[test]
+    fn iso_round_trips() {
+        assert_eq!(d(2026, 3, 7).iso(), "2026-03-07");
+        assert_eq!(Date::parse_iso("2026-03-07"), Some(d(2026, 3, 7)));
+        for bad in ["", "-", "2026-13-01", "2026-00-10", "2026-02-32", "2026-1-1x", "today"] {
+            assert_eq!(Date::parse_iso(bad), None, "{bad}");
+        }
     }
 }
