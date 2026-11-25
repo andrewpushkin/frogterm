@@ -12,6 +12,7 @@ pub mod framebuf;
 pub mod info;
 pub mod jpeg;
 pub mod layout;
+pub mod moon;
 pub mod pcf8563;
 pub mod photo_list;
 pub mod schedule;
