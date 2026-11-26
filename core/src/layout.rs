@@ -298,6 +298,22 @@ pub fn draw_photo_date(fb: &mut FrameBuffer, area: &Rectangle, taken: Date) {
     Pen { halo: true }.text(&mut t, &SMALL_FONT, &taken.photo_label(), at, HorizontalAlignment::Right, Ink::Black);
 }
 
+/// Where the photo counter goes: the screen's top-left corner.
+pub fn photo_counter_rect() -> Rectangle {
+    const W: u32 = 70; // "20/20" plus the outline, with room to spare
+    const H: u32 = 18;
+    Rectangle::new(Point::new(MARGIN as i32 - 2, MARGIN as i32 - 4), Size::new(W, H))
+}
+
+/// Which stored photo is on the screen, e.g. "3/10": a small label without a
+/// box (black, white outline), like the photo's date.
+pub fn draw_photo_counter(fb: &mut FrameBuffer, n: u8, total: u8) {
+    let r = photo_counter_rect();
+    let mut t = fb.clipped(&r);
+    let at = Point::new(r.top_left.x + 2, r.top_left.y + 2);
+    Pen { halo: true }.text(&mut t, &SMALL_FONT, &format!("{n}/{total}"), at, HorizontalAlignment::Left, Ink::Black);
+}
+
 fn text_width(font: &FontRenderer, s: &str) -> i32 {
     font.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Top).map_or(0, |d| d.advance.x)
 }
@@ -588,6 +604,23 @@ mod tests {
             // right-aligned to the photo's right edge, at the top
             assert!(corner.top_left.y < 20 && area.top_left.x + area.size.width as i32 - corner.bottom_right().unwrap().x < 20);
         }
+    }
+
+    #[test]
+    fn photo_counter_sits_in_the_top_left_corner() {
+        let draw = |n, total| {
+            let mut fb = FrameBuffer::new(Ink::Green);
+            draw_photo_counter(&mut fb, n, total);
+            fb
+        };
+        let fb = draw(3, 10);
+        let r = photo_counter_rect();
+        untouched_outside(&fb, &r);
+        assert!(r.top_left.x < 20 && r.top_left.y < 20 && r.size.width < 100 && r.size.height < 30, "{r:?}");
+        let drawn = |ink| (0..HEIGHT).any(|y| (0..WIDTH).any(|x| fb.get(x, y) == ink));
+        assert!(drawn(Ink::Black) && drawn(Ink::White), "black text with a white outline");
+        assert_ne!(fb.as_bytes(), draw(4, 10).as_bytes());
+        untouched_outside(&draw(20, 20), &r);
     }
 
     #[test]

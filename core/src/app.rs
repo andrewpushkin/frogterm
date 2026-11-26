@@ -12,7 +12,7 @@ use crate::date::Date;
 use crate::dither::{dither_area, veil};
 use crate::framebuf::FrameBuffer;
 use crate::info::Info;
-use crate::layout::{draw_events_box, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
+use crate::layout::{draw_events_box, draw_photo_counter, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
 use crate::schedule::{self, UpdatePlan, WakePlan};
 use crate::weather::Forecast;
 use crate::{battery, stock, tz};
@@ -241,9 +241,9 @@ fn browse(
     let now = now.ok_or_else(|| anyhow!("time unknown"))?;
     let slot = buttons::browse(state.current, state.stock_count, dir).ok_or_else(|| anyhow!("no stored photos"))?;
     let photo = dev.load_screen(slot).ok_or_else(|| anyhow!("stored photo {slot} unreadable"))?;
-    log::info!("{dir:?}: stored photo {slot} of {}", state.stock_count);
+    log::info!("{dir:?}: stored photo {} of {}", slot + 1, state.stock_count);
     let info = stored_info.unwrap_or(Info { fetched_at: 0, date: tz::to_local(now).0, forecast: None, events: None, tomorrow: None });
-    let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c);
+    let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c, (slot + 1, state.stock_count));
     dev.show(&fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
@@ -300,9 +300,9 @@ fn update(
         None => next_photo,
     };
     let (slot, photo) = photo.ok_or_else(|| anyhow!("no photo to show"))?;
-    log::info!("showing stored photo {slot} of {}", state.stock_count);
+    log::info!("showing stored photo {} of {}", slot + 1, state.stock_count);
 
-    let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c);
+    let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c, (slot + 1, state.stock_count));
     dev.show(&fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
@@ -362,8 +362,18 @@ pub fn place_photo(fb: &mut FrameBuffer, area: &Rectangle, mut rgb: Vec<u8>, opa
     Ok(())
 }
 
-/// Draws the events and weather boxes over a stored photo screen.
-pub fn compose(cfg: &Config, mut fb: FrameBuffer, info: &Info, now: i64, battery_mv: Option<u32>, room_c: Option<f32>) -> FrameBuffer {
+/// Draws the events and weather boxes and the photo counter (`n` of `total`
+/// stored photos) over a stored photo screen.
+pub fn compose(
+    cfg: &Config,
+    mut fb: FrameBuffer,
+    info: &Info,
+    now: i64,
+    battery_mv: Option<u32>,
+    room_c: Option<f32>,
+    (n, total): (u8, u8),
+) -> FrameBuffer {
+    draw_photo_counter(&mut fb, n, total);
     let (today, secs) = tz::to_local(now);
     let now_hm = ((secs / 3600) as u8, (secs % 3600 / 60) as u8);
     let backdrop = if cfg.opacity >= 100 { Backdrop::Solid } else { Backdrop::Clear };
