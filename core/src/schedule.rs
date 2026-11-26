@@ -108,13 +108,6 @@ pub fn plan_update(now: i64, info: Option<(i64, Date)>, photos_left: usize, max_
     }
 }
 
-/// Whether this update was asked for by a person (progress ticks are played):
-/// a button wake, or a timer wake that carries out a press postponed for
-/// panel rest.
-pub fn started_by_person(button_wake: bool, timer_wake: bool, postponed_press: bool) -> bool {
-    button_wake || (timer_wake && postponed_press)
-}
-
 /// E-paper care (Waveshare, Spectra 6 family): at least 180 s between refreshes.
 pub const PANEL_REST_SECS: i64 = 180;
 /// For a person pressing a button the owner accepts a shorter rest: the
@@ -262,14 +255,6 @@ mod tests {
             plan_update(just_after_midnight, Some((just_after_midnight - 15 * 60, today)), 3, 3600),
             UpdatePlan::RefreshInfo
         );
-    }
-
-    #[test]
-    fn postponed_press_is_still_a_persons_update() {
-        assert!(started_by_person(true, false, false), "button wake");
-        assert!(started_by_person(false, true, true), "timer wake carrying out a postponed press");
-        assert!(!started_by_person(false, true, false), "06:00 timer");
-        assert!(!started_by_person(false, false, true), "power-on is not a press");
     }
 
     #[test]

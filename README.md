@@ -152,14 +152,16 @@ make flash FEATURES=bars          # test build: six colour bars only
 | Sound | Meaning |
 |---|---|
 | short high chirp | button press noticed |
+| pip-pip every 2 s | all is well, waiting for the panel's rest (up to a minute) |
 | one beep | update finished |
 | three low beeps | update failed (retried in 30 min, up to 3 times) |
 
 - **Green button**: a stored photo not seen yet; once every stored photo has
   been on the screen, a new batch is downloaded. The scheduled updates do
   the same. Presses during an update chirp and are ignored. The panel rests
-  between refreshes (E Ink care); an earlier press is carried out
-  automatically when it may.
+  between refreshes (E Ink care): a press too soon after the last refresh
+  waits awake with a pip-pip every 2 s, then updates. The update itself is
+  silent (the screen changing shows it).
 - **Side buttons**: previous / next stored photo, no Wi-Fi. Photos seen this
   way count as seen.
 - **No Wi-Fi most of the time**: the device keeps a batch of 10 ready-to-show

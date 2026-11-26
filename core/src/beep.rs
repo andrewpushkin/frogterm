@@ -8,12 +8,14 @@ pub struct Tone {
 }
 
 pub const SUCCESS: &[Tone] = &[Tone { hz: 2000, ms: 150 }];
-/// Progress tick at each step of a button-started update (Wi-Fi up,
-/// downloads done, screen drawing).
-pub const TICK: &[Tone] = &[Tone { hz: 2700, ms: 40 }, Tone { hz: 0, ms: 60 }, Tone { hz: 2700, ms: 40 }];
+/// "All is well, just wait": played every `WAIT_EVERY_MS` while a button
+/// press waits for the panel's rest (the update itself is silent).
+pub const WAIT: &[Tone] = &[Tone { hz: 2700, ms: 40 }, Tone { hz: 0, ms: 60 }, Tone { hz: 2700, ms: 40 }];
 
 /// Short chirp: "I saw the button press" (right after the button wakes the device).
 pub const PRESS: &[Tone] = &[Tone { hz: 3000, ms: 50 }];
+/// Interval of the `WAIT` pip-pip.
+pub const WAIT_EVERY_MS: u64 = 2000;
 pub const ERROR: &[Tone] = &[
     Tone { hz: 1000, ms: 100 },
     Tone { hz: 0, ms: 80 },
@@ -41,14 +43,14 @@ mod tests {
     }
 
     #[test]
-    fn tick_is_an_audible_double_pip() {
+    fn wait_is_an_audible_double_pip() {
         // the piezo is loud only near its resonance (~2.5-4 kHz): a 1.2 kHz,
         // 30 ms tick was inaudible on the device
-        let pips: Vec<&Tone> = TICK.iter().filter(|t| t.hz > 0).collect();
+        let pips: Vec<&Tone> = WAIT.iter().filter(|t| t.hz > 0).collect();
         assert_eq!(pips.len(), 2, "pip-pip, unlike the single press chirp");
         assert!(pips.iter().all(|t| (2500..=4000).contains(&t.hz) && t.ms >= 40));
         for other in [SUCCESS, PRESS, ERROR] {
-            assert_ne!(TICK, other);
+            assert_ne!(WAIT, other);
         }
     }
 

@@ -37,8 +37,6 @@ pub struct State {
     pub seen: stock::Seen,
     /// Unix time of the last panel refresh.
     pub last_refresh: Option<i64>,
-    /// A button press postponed for panel rest (the timer wake carries it out).
-    pub postponed: Option<Press>,
     /// Stored photo slot on the screen now (for next/previous browsing).
     pub current: u8,
 }
@@ -93,10 +91,11 @@ pub trait Device {
     fn load_info(&mut self) -> Option<Info>;
     fn save_info(&mut self, info: &Info);
     fn save_state(&mut self, state: &State);
+    /// Stays awake for `ms` milliseconds.
+    fn pause(&mut self, ms: u64);
     /// Wi-Fi on, fresh weather and calendars, and `batch` new photo screens
-    /// (0 = none), Wi-Fi off. `now` is the RTC time if known. With `ticks`,
-    /// plays `beep::TICK` at each step (a person is waiting).
-    fn go_online(&mut self, now: Option<i64>, batch: u8, ticks: bool) -> Result<Online>;
+    /// (0 = none), Wi-Fi off. `now` is the RTC time if known.
+    fn go_online(&mut self, now: Option<i64>, batch: u8) -> Result<Online>;
 }
 
 /// After a timer wake: seconds to sleep on if the RTC woke the chip early.
@@ -123,17 +122,13 @@ pub fn run(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
     secs
 }
 
-fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r: Readings) -> u64 {
-    // which button this update is for: this wake's, or one postponed for panel rest
+fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, mut r: Readings) -> u64 {
     let press = match wake {
         Wake::Button(p) => Some(p),
-        Wake::Timer => state.postponed,
-        Wake::PowerOn => None,
+        Wake::Timer | Wake::PowerOn => None,
     };
     log::info!("{wake:?}, button: {press:?}");
-    // audible progress, only when a person pressed a button (06:00 stays quiet)
-    let by_person = schedule::started_by_person(matches!(wake, Wake::Button(_)), wake == Wake::Timer, state.postponed.is_some());
-    let any_now = r.now.or_else(|| dev.clock());
+    let mut any_now = r.now.or_else(|| dev.clock());
 
     log::info!("battery {:?} mV = {:?} %", r.battery_mv, r.battery_mv.map(battery::percent));
     if r.battery_mv.is_some_and(battery::too_low_to_update) {
@@ -148,29 +143,29 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
     state.target = provisional.target;
     dev.save_state(state);
 
-    // e-paper care: rest between refreshes; a quick second press is done
-    // automatically when the panel may refresh again
+    // e-paper care: rest between refreshes
     if let Some(now) = r.now.filter(|_| cfg.panel_rest) {
-        // a person pressing a button waits less than the daily update
+        // a person pressing a button waits less than the scheduled update
         let rest = if press.is_some() { schedule::BUTTON_REST_SECS } else { schedule::PANEL_REST_SECS };
         if let Some(wait) = schedule::panel_rest(now, state.last_refresh, rest) {
             log::info!("panel refreshed {} s ago, updating in {wait} s", rest - wait as i64);
-            state.target = now + wait as i64;
-            // remember which button a person pressed, for the postponed update
-            if let Wake::Button(p) = wake {
-                state.postponed = Some(p);
+            if press.is_none() {
+                state.target = now + wait as i64;
+                dev.save_state(state);
+                return wait;
             }
-            dev.save_state(state);
-            return wait;
+            // a person waits awake: a pip-pip every 2 s says "all is well, just wait"
+            wait_for_panel(dev, wait);
+            r.now = Some(now + wait as i64);
+            any_now = r.now;
         }
     }
 
-    state.postponed = None; // carried out now
     let stored_info = dev.load_info();
 
     // side buttons: browse the stored photos, no Wi-Fi
     if let Some(dir @ (Press::Next | Press::Previous)) = press {
-        match browse(dev, state, cfg, dir, any_now, stored_info, r, by_person) {
+        match browse(dev, state, cfg, dir, any_now, stored_info, r) {
             Ok(()) => dev.beep(beep::SUCCESS),
             Err(e) => {
                 log::warn!("browse: {e:#}");
@@ -198,7 +193,7 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
     };
     log::info!("plan {plan:?}: {photos_left} of {} stored photos not seen yet", state.stock_count);
 
-    match update(dev, state, cfg, plan, r, stored_info, next_photo, by_person) {
+    match update(dev, state, cfg, plan, r, stored_info, next_photo) {
         Ok(now) => {
             dev.beep(beep::SUCCESS);
             state.attempt = 0;
@@ -219,6 +214,17 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
     }
 }
 
+/// Stays awake `secs` seconds, playing `beep::WAIT` every `beep::WAIT_EVERY_MS`.
+fn wait_for_panel(dev: &mut impl Device, secs: u64) {
+    let mut left = secs * 1000;
+    while left > 0 {
+        dev.beep(beep::WAIT);
+        let step = left.min(beep::WAIT_EVERY_MS);
+        dev.pause(step);
+        left -= step;
+    }
+}
+
 /// Next/previous stored photo with the stored weather and calendar.
 #[allow(clippy::too_many_arguments)]
 fn browse(
@@ -229,7 +235,6 @@ fn browse(
     now: Option<i64>,
     stored_info: Option<Info>,
     r: Readings,
-    by_person: bool,
 ) -> Result<()> {
     let now = now.ok_or_else(|| anyhow!("time unknown"))?;
     let slot = buttons::browse(state.current, state.stock_count, dir).ok_or_else(|| anyhow!("no stored photos"))?;
@@ -237,9 +242,6 @@ fn browse(
     log::info!("{dir:?}: stored photo {slot} of {}", state.stock_count);
     let info = stored_info.unwrap_or(Info { fetched_at: 0, date: tz::to_local(now).0, forecast: None, events: None, tomorrow: None });
     let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c);
-    if by_person {
-        dev.beep(beep::TICK);
-    }
     dev.show(&fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
@@ -257,7 +259,6 @@ fn update(
     r: Readings,
     stored_info: Option<Info>,
     next_photo: Option<(u8, FrameBuffer)>,
-    by_person: bool,
 ) -> Result<i64> {
     let (now, info, batch) = match plan {
         UpdatePlan::Offline => {
@@ -266,7 +267,7 @@ fn update(
         }
         UpdatePlan::RefreshInfo | UpdatePlan::RefreshAll => {
             let all = plan == UpdatePlan::RefreshAll;
-            let o = dev.go_online(r.now, if all { cfg.photo_batch } else { 0 }, by_person)?;
+            let o = dev.go_online(r.now, if all { cfg.photo_batch } else { 0 })?;
             let info = fresh_info(o.now, o.forecast, o.events, stored_info.as_ref());
             dev.save_info(&info);
             (o.now, info, all.then_some(o.batch))
@@ -300,9 +301,6 @@ fn update(
     log::info!("showing stored photo {slot} of {}", state.stock_count);
 
     let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c);
-    if by_person {
-        dev.beep(beep::TICK);
-    }
     dev.show(&fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
@@ -423,11 +421,12 @@ mod tests {
         /// Marker of the first screen of the next batch.
         next_batch: u8,
         saved: Option<State>,
+        paused_ms: Vec<u64>,
     }
 
     impl Device for Fake {
         fn beep(&mut self, tones: &[Tone]) {
-            let name = [(beep::PRESS, "press"), (beep::TICK, "tick"), (beep::SUCCESS, "ok"), (beep::ERROR, "error")]
+            let name = [(beep::PRESS, "press"), (beep::WAIT, "wait"), (beep::SUCCESS, "ok"), (beep::ERROR, "error")]
                 .iter()
                 .find(|(t, _)| *t == tones)
                 .map_or("?", |(_, n)| n);
@@ -457,7 +456,10 @@ mod tests {
         fn save_state(&mut self, state: &State) {
             self.saved = Some(state.clone());
         }
-        fn go_online(&mut self, now: Option<i64>, batch: u8, _ticks: bool) -> Result<Online> {
+        fn pause(&mut self, ms: u64) {
+            self.paused_ms.push(ms);
+        }
+        fn go_online(&mut self, now: Option<i64>, batch: u8) -> Result<Online> {
             self.online_calls.push(batch);
             if self.offline {
                 anyhow::bail!("no Wi-Fi");
@@ -501,7 +503,7 @@ mod tests {
         assert_eq!(dev.online_calls, vec![3]);
         assert_eq!(dev.shown, vec![Some(0)]);
         assert_eq!((st.stock_count, st.current, st.seen), (3, 0, 1));
-        assert_eq!(dev.beeps, vec!["ok"], "no press chirp or ticks on power-on");
+        assert_eq!(dev.beeps, vec!["ok"], "no press chirp on power-on");
         assert_eq!(st.target, schedule::next_update(T0, &[(6, 0)]));
         assert_eq!(secs as i64, st.target - T0);
         assert_eq!(dev.saved, Some(st));
@@ -514,7 +516,7 @@ mod tests {
         run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
         assert!(dev.online_calls.is_empty(), "fresh info and unseen photos: offline");
         assert_eq!(dev.shown, vec![Some(1)]);
-        assert_eq!(dev.beeps, vec!["press", "tick", "ok"]);
+        assert_eq!(dev.beeps, vec!["press", "ok"], "the update itself is silent");
     }
 
     #[test]
@@ -559,18 +561,39 @@ mod tests {
     }
 
     #[test]
-    fn quick_second_press_is_postponed_and_done_by_the_timer() {
+    fn quick_second_press_waits_awake_with_a_pip_every_2_s_then_updates() {
         let (mut dev, mut st) = stocked(3);
         run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
-        let wait = run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 20));
-        assert_eq!(wait, 40, "buttons rest the panel 60 s");
-        assert_eq!(dev.shown.len(), 1);
-        assert_eq!(st.postponed, Some(Press::Next));
-        run(&mut dev, &mut st, &cfg(), Wake::Timer, at(T0 + 60));
+        dev.beeps.clear();
+        let secs = run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 20));
+        assert_eq!(dev.paused_ms, vec![2000; 20], "buttons rest the panel 60 s: 40 s left");
+        let mut expected = vec!["press"];
+        expected.extend(["wait"; 20]);
+        expected.push("ok");
+        assert_eq!(dev.beeps, expected, "pip-pips while waiting, silence while updating");
         assert_eq!(dev.shown, vec![Some(1), Some(2)]);
-        assert_eq!(st.postponed, None);
-        assert_eq!(dev.beeps.last(), Some(&"ok"));
-        assert!(dev.beeps.contains(&"tick"), "the postponed press is a person's update");
+        assert_eq!(st.last_refresh, Some(T0 + 60));
+        assert_eq!(st.target, schedule::next_update(T0 + 60, &[(6, 0)]));
+        assert_eq!(secs as i64, st.target - (T0 + 60));
+    }
+
+    #[test]
+    fn odd_waits_end_with_a_shorter_pause() {
+        let (mut dev, mut st) = stocked(3);
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 57));
+        assert_eq!(dev.paused_ms, vec![2000, 1000]);
+    }
+
+    #[test]
+    fn timer_wake_during_panel_rest_sleeps_quietly() {
+        let (mut dev, mut st) = stocked(3);
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
+        dev.beeps.clear();
+        let secs = run(&mut dev, &mut st, &cfg(), Wake::PowerOn, at(T0 + 30));
+        assert_eq!(secs as i64, schedule::PANEL_REST_SECS - 30);
+        assert!(dev.beeps.is_empty() && dev.paused_ms.is_empty());
+        assert_eq!(dev.shown.len(), 1);
     }
 
     #[test]

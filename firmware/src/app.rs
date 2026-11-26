@@ -12,7 +12,6 @@ use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use frogterm_core::album::{self, Photo};
 use frogterm_core::app::{self, Device, Online, Readings, State};
 use frogterm_core::beep::Tone;
-use frogterm_core::buttons::Press;
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
 use frogterm_core::framebuf::{FrameBuffer, Ink};
 use frogterm_core::info::Info;
@@ -61,7 +60,6 @@ impl Nvs {
             stock_count: nvs.get_u8("stock_n")?.unwrap_or(0),
             seen,
             last_refresh: nvs.get_i64("refreshed")?,
-            postponed: Press::from_code(nvs.get_u8("pressed")?.unwrap_or(0)),
             current: nvs.get_u8("current")?.unwrap_or(0),
         };
         Ok((Nvs { nvs, last_ap }, state))
@@ -73,7 +71,6 @@ impl Nvs {
         let _ = nvs.set_u8("attempt", s.attempt);
         let _ = nvs.set_u8("stock_n", s.stock_count);
         let _ = nvs.set_u32("seen", s.seen);
-        let _ = nvs.set_u8("pressed", s.postponed.map_or(0, Press::code));
         let _ = nvs.set_u8("current", s.current);
         if let Some(t) = s.last_refresh {
             let _ = nvs.set_i64("refreshed", t);
@@ -144,13 +141,12 @@ impl Device for Reterminal<'_> {
         self.nvs.save(state);
     }
 
-    fn go_online(&mut self, now: Option<i64>, batch: u8, ticks: bool) -> Result<Online> {
-        let tick = |step: &str| {
-            if ticks {
-                log::info!("progress: {step}");
-                crate::board::play(beep::TICK);
-            }
-        };
+    fn pause(&mut self, ms: u64) {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
+
+    fn go_online(&mut self, now: Option<i64>, batch: u8) -> Result<Online> {
+        let tick = |step: &str| log::info!("progress: {step}");
         log_heap("before Wi-Fi");
         // read the stored photo list from flash while Wi-Fi joins
         let preload = if batch > 0 {
@@ -252,7 +248,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
     let mut dev = Reterminal { cfg: &cfg, board, epd, rtc, rtc_now, nvs, modem: Some(p.modem), sysloop, nvs_part };
     let readings = Readings { now: rtc_now, battery_mv, room_c: room.map(|r| r.0) };
     let secs = app::run(&mut dev, &mut state, &rules, wake, readings);
-    // buttons stay active: a press wakes the device (and replaces a postponed action)
+    // buttons stay active: a press wakes the device
     deep_sleep(secs, schedule::arm_button(button_held()))
 }
 

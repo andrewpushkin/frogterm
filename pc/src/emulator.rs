@@ -1,8 +1,8 @@
 //! The device on the PC: the firmware's wake logic (`frogterm_core::app`)
 //! with a PC `Device` — the panel is a window (or out/screen.png), flash is
 //! out/, Wi-Fi is the PC's internet. Click the three buttons in the window as
-//! you would press them on the reTerminal; the timer wakes (06:00, retries,
-//! postponed presses) happen too while the emulator runs.
+//! you would press them on the reTerminal; the timer wakes (scheduled updates,
+//! retries) happen too while the emulator runs.
 
 use std::fs;
 use std::io::Write;
@@ -204,7 +204,7 @@ impl Device for Emulated {
     fn beep(&mut self, tones: &[Tone]) {
         let sound = match tones {
             t if t == beep::PRESS => "chirp (press noticed)",
-            t if t == beep::TICK => "pip-pip (progress)",
+            t if t == beep::WAIT => "pip-pip (wait, the panel is resting)",
             t if t == beep::SUCCESS => "beep (done)",
             t if t == beep::ERROR => "beep beep beep (failed)",
             _ => "beep",
@@ -257,7 +257,11 @@ impl Device for Emulated {
         }
     }
 
-    fn go_online(&mut self, now: Option<i64>, batch: u8, ticks: bool) -> Result<Online> {
+    fn pause(&mut self, ms: u64) {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
+
+    fn go_online(&mut self, now: Option<i64>, batch: u8) -> Result<Online> {
         let now = now.or_else(|| self.clock()).context("time unknown")?;
         log::info!("online: weather, calendars{}", if batch > 0 { format!(" and {batch} new photos") } else { String::new() });
         let today = tz::to_local(now).0;
@@ -268,9 +272,6 @@ impl Device for Emulated {
             (weather.join().ok().flatten(), events)
         });
         let screens = if batch > 0 { self.photo_batch(now as u64, batch)? } else { Vec::new() };
-        if ticks {
-            self.beep(beep::TICK);
-        }
         Ok(Online { now, forecast, events, batch: screens })
     }
 }
@@ -455,13 +456,12 @@ const STATE_HEADER: &str = "frogterm-state v1";
 /// The device's NVS state as text (out/state.txt).
 fn state_to_text(s: &State) -> String {
     format!(
-        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\npostponed {}\ncurrent {}\n",
+        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\ncurrent {}\n",
         s.target,
         s.attempt,
         s.stock_count,
         s.seen,
         s.last_refresh.map_or("-".into(), |t| t.to_string()),
-        s.postponed.map_or(0, Press::code),
         s.current
     )
 }
@@ -480,7 +480,6 @@ fn state_from_text(text: &str) -> Option<State> {
             "stock" => s.stock_count = v.parse().ok()?,
             "seen" => s.seen = v.parse().ok()?,
             "refreshed" => s.last_refresh = if v == "-" { None } else { Some(v.parse().ok()?) },
-            "postponed" => s.postponed = Press::from_code(v.parse().ok()?),
             "current" => s.current = v.parse().ok()?,
             _ => {}
         }
@@ -529,7 +528,6 @@ mod tests {
             stock_count: 10,
             seen: 0b1011,
             last_refresh: Some(1_795_590_000),
-            postponed: Some(Press::Next),
             current: 3,
         };
         assert_eq!(state_from_text(&state_to_text(&s)), Some(s));
