@@ -16,6 +16,12 @@ whenever the green button is pressed, then
 deep-sleeps (≈14 µA). Everything is written in Rust, and everything builds in
 Docker.
 
+![The PC emulator: the device's three buttons and LED on top, the panel in its six inks below (faces blurred)](docs/emulator.png)
+
+*The PC emulator (`make emulator`): the reTerminal's buttons and LED on top, the
+panel's six inks below — two portrait photos, today's events and the weather.
+Faces blurred for this README.*
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                       photo(s), full screen                  │
