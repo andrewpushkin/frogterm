@@ -108,11 +108,9 @@ pub fn plan_update(now: i64, info: Option<(i64, Date)>, photos_left: usize, max_
     }
 }
 
-/// E-paper care (Waveshare, Spectra 6 family): at least 180 s between refreshes.
+/// E-paper care (Waveshare, Spectra 6 family): at least 180 s between
+/// refreshes, for scheduled updates and button presses alike.
 pub const PANEL_REST_SECS: i64 = 180;
-/// For a person pressing a button the owner accepts a shorter rest: the
-/// refresh itself takes ~33 s, so this leaves ~30 s between refreshes.
-pub const BUTTON_REST_SECS: i64 = 60;
 
 /// Seconds to wait before the panel may refresh again (after `rest` seconds),
 /// or `None` if it may now.
@@ -266,14 +264,6 @@ mod tests {
         assert_eq!(panel_rest(t, Some(t - 3600), PANEL_REST_SECS), None);
         // clock moved backwards (RTC reset): don't wait forever
         assert_eq!(panel_rest(t, Some(t + 7200), PANEL_REST_SECS), None);
-    }
-
-    #[test]
-    fn button_presses_rest_only_60_s() {
-        let t = 1_795_600_000;
-        assert_eq!(BUTTON_REST_SECS, 60);
-        assert_eq!(panel_rest(t, Some(t - 40), BUTTON_REST_SECS), Some(20));
-        assert_eq!(panel_rest(t, Some(t - 60), BUTTON_REST_SECS), None);
     }
 
     #[test]

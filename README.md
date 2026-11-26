@@ -152,7 +152,7 @@ make flash FEATURES=bars          # test build: six colour bars only
 | Sound | Meaning |
 |---|---|
 | short high chirp | button press noticed |
-| pip-pip every 2 s | all is well, waiting for the panel's rest (up to a minute) |
+| pip-pip every 2 s | all is well, waiting for the panel's 3-minute rest |
 | one beep | update finished |
 | three low beeps | update failed (retried in 30 min, up to 3 times) |
 

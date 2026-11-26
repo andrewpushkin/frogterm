@@ -27,8 +27,9 @@ use crate::settings::{host, settings, Settings};
 use crate::sleep::{button_held, deep_sleep, wake_cause};
 use crate::store::Store;
 
-/// Whole update must finish within this, or the device gives up and sleeps.
-const WATCHDOG: Duration = Duration::from_secs(300);
+/// Whole update must finish within this, or the device gives up and sleeps
+/// (300 s for the update, plus a button press waiting out the panel's rest).
+const WATCHDOG: Duration = Duration::from_secs(300 + schedule::PANEL_REST_SECS as u64);
 const MAX_PAGES: usize = 100;
 const ATTEMPTS: usize = 3;
 /// Stack of the download threads (TLS handshake needs ~10 KB).

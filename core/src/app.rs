@@ -145,8 +145,7 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
 
     // e-paper care: rest between refreshes
     if let Some(now) = r.now.filter(|_| cfg.panel_rest) {
-        // a person pressing a button waits less than the scheduled update
-        let rest = if press.is_some() { schedule::BUTTON_REST_SECS } else { schedule::PANEL_REST_SECS };
+        let rest = schedule::PANEL_REST_SECS;
         if let Some(wait) = schedule::panel_rest(now, state.last_refresh, rest) {
             log::info!("panel refreshed {} s ago, updating in {wait} s", rest - wait as i64);
             if press.is_none() {
@@ -566,22 +565,22 @@ mod tests {
         run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
         dev.beeps.clear();
         let secs = run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 20));
-        assert_eq!(dev.paused_ms, vec![2000; 20], "buttons rest the panel 60 s: 40 s left");
+        assert_eq!(dev.paused_ms, vec![2000; 80], "the panel rests 3 min, for buttons too: 160 s left");
         let mut expected = vec!["press"];
-        expected.extend(["wait"; 20]);
+        expected.extend(["wait"; 80]);
         expected.push("ok");
         assert_eq!(dev.beeps, expected, "pip-pips while waiting, silence while updating");
         assert_eq!(dev.shown, vec![Some(1), Some(2)]);
-        assert_eq!(st.last_refresh, Some(T0 + 60));
-        assert_eq!(st.target, schedule::next_update(T0 + 60, &[(6, 0)]));
-        assert_eq!(secs as i64, st.target - (T0 + 60));
+        assert_eq!(st.last_refresh, Some(T0 + 180));
+        assert_eq!(st.target, schedule::next_update(T0 + 180, &[(6, 0)]));
+        assert_eq!(secs as i64, st.target - (T0 + 180));
     }
 
     #[test]
     fn odd_waits_end_with_a_shorter_pause() {
         let (mut dev, mut st) = stocked(3);
         run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
-        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 57));
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 177));
         assert_eq!(dev.paused_ms, vec![2000, 1000]);
     }
 
