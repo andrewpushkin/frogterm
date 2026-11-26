@@ -7,7 +7,8 @@ Spectra 6 panel) that turns it into a family photo frame:
   one of them from the newest 300), with the date it was taken in its
   top-right corner,
 - **today's events** from Google Calendar (tomorrow's once today is done),
-- the **weather** for now and every 2 hours up to +12 h (48 h are fetched, so offline updates still show their own next 12 h) (rain chance, or the UV index when high),
+- the **weather** now and in +2, +4 … +12 hours (rain chance, or the UV index when high;
+  48 hours are fetched, so offline updates show their own next 12 hours),
 - **room temperature** and **battery level**.
 
 It updates every day at 06:00 and whenever the green button is pressed, then
