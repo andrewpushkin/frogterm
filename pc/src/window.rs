@@ -91,6 +91,16 @@ fn button_at(x: f32, y: f32) -> Option<Press> {
     (0..BUTTONS.len()).find(|&i| button_rect(i).contains(p)).map(|i| BUTTONS[i].0)
 }
 
+/// The time left as a clock: "6:37:12", "3:05", "0:40".
+pub fn countdown(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, secs % 3600 / 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
 /// "7 h 12 min", "3 min 5 s", "40 s".
 pub fn duration(secs: u64) -> String {
     match secs {
@@ -203,12 +213,25 @@ fn draw_bar(pixels: &mut [u32], awake: bool, led_lit: bool, held: Option<Press>,
     let led = if led_lit { Rgb888::new(60, 230, 90) } else { Rgb888::new(35, 75, 45) };
     let y = 66;
     let _ = Circle::new(Point::new(12, y - 6), 12).into_styled(PrimitiveStyle::with_fill(led)).draw(&mut c);
-    let state = match (awake, wake_in) {
-        (true, _) => "awake".to_string(),
-        (false, Some(s)) => format!("asleep, timer wake in {}", duration(s)),
-        (false, None) => "asleep".to_string(),
-    };
+    // right: the countdown to the timer wake, ticking every second
+    let mut status_end = WIDTH as i32 - 12;
+    if let (false, Some(secs)) = (awake, wake_in) {
+        let text = format!("timer wake in {}", countdown(secs));
+        let right = Point::new(WIDTH as i32 - 12, y);
+        if let Ok(d) = BUTTON_FONT.render_aligned(
+            text.as_str(),
+            right,
+            VerticalPosition::Center,
+            HorizontalAlignment::Right,
+            FontColor::Transparent(Rgb888::new(255, 255, 255)),
+            &mut c,
+        ) {
+            status_end = d.map_or(status_end, |b| b.top_left.x) - 16;
+        }
+    }
+    let state = if awake { "awake" } else { "asleep" };
     let status: String = format!("{state}  |  {last_log}").chars().map(|ch| if (ch as u32) < 0x100 { ch } else { '?' }).collect();
+    let status = fit(&STATUS_FONT, &status, status_end - 32);
     let _ = STATUS_FONT.render_aligned(
         status.as_str(),
         Point::new(32, y),
@@ -217,6 +240,19 @@ fn draw_bar(pixels: &mut [u32], awake: bool, led_lit: bool, held: Option<Press>,
         FontColor::Transparent(Rgb888::new(230, 230, 230)),
         &mut c,
     );
+}
+
+/// `text`, cut with "..." to at most `width` pixels in `font`.
+fn fit(font: &FontRenderer, text: &str, width: i32) -> String {
+    let w = |t: &str| font.get_rendered_dimensions(t, Point::zero(), VerticalPosition::Center).map_or(0, |d| d.advance.x);
+    if w(text) <= width {
+        return text.to_string();
+    }
+    let mut cut: String = text.to_string();
+    while !cut.is_empty() && w(&format!("{cut}...")) > width {
+        cut.pop();
+    }
+    format!("{cut}...")
 }
 
 fn rgb32(c: Rgb888) -> u32 {
@@ -283,6 +319,35 @@ mod tests {
         assert_eq!(duration(40), "40 s");
         assert_eq!(duration(185), "3 min 5 s");
         assert_eq!(duration(7 * 3600 + 12 * 60 + 9), "7 h 12 min");
+    }
+
+    #[test]
+    fn countdown_ticks_like_a_clock() {
+        assert_eq!(countdown(40), "0:40");
+        assert_eq!(countdown(185), "3:05");
+        assert_eq!(countdown(6 * 3600 + 37 * 60 + 12), "6:37:12");
+        assert_eq!(countdown(36 * 3600), "36:00:00");
+    }
+
+    #[test]
+    fn long_status_is_cut_to_fit() {
+        let long = "x".repeat(500);
+        let cut = fit(&STATUS_FONT, &long, 300);
+        assert!(cut.ends_with("...") && cut.len() < long.len());
+        let w = STATUS_FONT.get_rendered_dimensions(cut.as_str(), Point::zero(), VerticalPosition::Center).unwrap().advance.x;
+        assert!(w <= 300, "{w} px");
+        assert_eq!(fit(&STATUS_FONT, "short", 300), "short");
+    }
+
+    #[test]
+    fn countdown_is_drawn_at_the_right_only_while_asleep() {
+        let right_part = |px: &[u32]| (0..BAR as usize).any(|y| (W - 60..W - 12).any(|x| px[y * W + x] == 0x00ff_ffff));
+        let mut asleep = vec![0u32; W * H];
+        draw_bar(&mut asleep, false, false, None, Some(3725), "");
+        assert!(right_part(&asleep), "white countdown digits at the right");
+        let mut awake = vec![0u32; W * H];
+        draw_bar(&mut awake, true, false, None, None, "");
+        assert!(!right_part(&awake), "no countdown while awake");
     }
 
     #[test]
