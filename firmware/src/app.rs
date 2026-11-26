@@ -29,6 +29,8 @@ use crate::store::Store;
 
 /// Whole update must finish within this, or the device gives up and sleeps
 /// (300 s for the update, plus a button press waiting out the panel's rest).
+/// Sleep after a crash restart before trying again.
+const CRASH_PAUSE_SECS: u64 = 30 * 60;
 const WATCHDOG: Duration = Duration::from_secs(300 + schedule::PANEL_REST_SECS as u64);
 const MAX_PAGES: usize = 100;
 const ATTEMPTS: usize = 3;
@@ -193,6 +195,14 @@ pub fn run() -> ! {
 }
 
 fn run_inner() -> Result<std::convert::Infallible> {
+    // a crash restarts the chip at once; without this pause a crash that
+    // repeats would re-download and re-store a photo batch every minute
+    // (flash wear, battery). Buttons still wake it.
+    if let Some(why) = crate::sleep::crash_reset() {
+        log::error!("restarted after a crash ({why}), pausing {} min", CRASH_PAUSE_SECS / 60);
+        crate::board::set_led(Led::Off);
+        deep_sleep(CRASH_PAUSE_SECS, schedule::arm_button(button_held()));
+    }
     let p = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;

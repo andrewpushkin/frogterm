@@ -21,6 +21,20 @@ pub fn wake_cause() -> Wake {
     }
 }
 
+/// Why the chip restarted, if it was a crash (panic, watchdog, brownout)
+/// rather than a power-on or a wake from deep sleep.
+pub fn crash_reset() -> Option<&'static str> {
+    #[allow(non_upper_case_globals)]
+    match unsafe { sys::esp_reset_reason() } {
+        sys::esp_reset_reason_t_ESP_RST_PANIC => Some("panic"),
+        sys::esp_reset_reason_t_ESP_RST_INT_WDT => Some("interrupt watchdog"),
+        sys::esp_reset_reason_t_ESP_RST_TASK_WDT => Some("task watchdog"),
+        sys::esp_reset_reason_t_ESP_RST_WDT => Some("watchdog"),
+        sys::esp_reset_reason_t_ESP_RST_BROWNOUT => Some("brownout"),
+        _ => None,
+    }
+}
+
 fn is_down(gpio: i32) -> bool {
     unsafe {
         sys::gpio_set_direction(gpio, sys::gpio_mode_t_GPIO_MODE_INPUT);

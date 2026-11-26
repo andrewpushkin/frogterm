@@ -145,6 +145,8 @@ wake (timer | KEY0 | power-on)
 
 Button presses while awake are ignored. Global watchdog: 120 s for a normal
 update, 240 s when the list is refreshed; a timeout is a failure.
+A restart after a crash (panic, watchdog, brownout) sleeps 30 min first
+(buttons armed), so a repeating crash cannot re-store photo batches in a loop.
 
 ### 7.2 Failure handling (builder's call, owner may override)
 
