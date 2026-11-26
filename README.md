@@ -1,5 +1,11 @@
 # frogterm
 
+[![CI](https://github.com/andrewpushkin/frogterm/actions/workflows/ci.yml/badge.svg)](https://github.com/andrewpushkin/frogterm/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Rust](https://img.shields.io/badge/rust-1.100-orange?logo=rust)
+![ESP32-S3](https://img.shields.io/badge/ESP32--S3-ESP--IDF%205.5-red?logo=espressif)
+![E-paper](https://img.shields.io/badge/e--paper-Spectra%206%20color-green)
+
 Firmware for a Seeed **reTerminal E1002** (ESP32-S3, 7.3" six-colour E Ink
 Spectra 6 panel) that turns it into a family photo frame:
 
