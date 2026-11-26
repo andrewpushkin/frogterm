@@ -45,6 +45,17 @@ pub struct Info {
 }
 
 impl Info {
+    /// Stored (today's, tomorrow's) events as seen on local date `today`: after
+    /// midnight the stored "tomorrow" are today's events; older ones are gone.
+    pub fn events_for(&self, today: Date) -> (Option<Vec<DayEvent>>, Option<Vec<DayEvent>>) {
+        let days = today.days_since_epoch() - self.date.days_since_epoch();
+        match days {
+            0 => (self.events.clone(), self.tomorrow.clone()),
+            1 => (self.tomorrow.clone(), None),
+            _ => (None, None),
+        }
+    }
+
     pub fn to_text(&self) -> String {
         let d = self.date;
         let mut s = format!("{HEADER}\nfetched {}\ndate {:04}-{:02}-{:02}\n", self.fetched_at, d.year, d.month, d.day);
@@ -211,6 +222,16 @@ mod tests {
         assert_eq!(Info::from_text(v1), None);
         assert_eq!(Info::from_text(&v1.replace("v1", "v2")), None);
         assert!(info().to_text().starts_with("frogterm-info v3\n"));
+    }
+
+    #[test]
+    fn events_move_to_the_right_day() {
+        let i = info();
+        let day = |d| Date { year: 2026, month: 11, day: d };
+        assert_eq!(i.events_for(day(25)), (i.events.clone(), i.tomorrow.clone()));
+        assert_eq!(i.events_for(day(26)), (i.tomorrow.clone(), None), "yesterday's tomorrow is today");
+        assert_eq!(i.events_for(day(27)), (None, None), "too old");
+        assert_eq!(i.events_for(day(24)), (None, None), "clock went back");
     }
 
     #[test]

@@ -325,7 +325,7 @@ fn sleep_until_next(dev: &mut impl Device, state: &mut State, now: Option<i64>, 
 }
 
 /// Weather and calendar of a fetch; whatever failed falls back to the stored
-/// ones (events only if they are of the same day).
+/// ones (events only of today and tomorrow).
 pub fn fresh_info(
     now: i64,
     forecast: Option<Forecast>,
@@ -333,10 +333,9 @@ pub fn fresh_info(
     stored: Option<&Info>,
 ) -> Info {
     let today = tz::to_local(now).0;
-    let same_day = stored.filter(|i| i.date == today);
     let (events, tomorrow) = match events {
         Some((a, b)) => (Some(a), Some(b)),
-        None => (same_day.and_then(|i| i.events.clone()), same_day.and_then(|i| i.tomorrow.clone())),
+        None => stored.map_or((None, None), |i| i.events_for(today)),
     };
     Info {
         fetched_at: now,
@@ -374,7 +373,9 @@ pub fn compose(cfg: &Config, mut fb: FrameBuffer, info: &Info, now: i64, battery
         Some(_) => format!("{:02}:{:02}", now_hm.0, now_hm.1),
         None => format!("{} {:02}:{:02}", cfg.place, now_hm.0, now_hm.1),
     };
-    let agenda = calendar::agenda(info.events.clone(), info.tomorrow.clone(), now_hm);
+    // only what is still ahead: today's events not yet over, else tomorrow's
+    let (events, tomorrow) = info.events_for(today);
+    let agenda = calendar::agenda(events, tomorrow, now_hm);
     let window = info.forecast.as_ref().and_then(|f| f.window(now));
     draw_weather_box(&mut fb, window.as_deref(), backdrop);
     draw_events_box(
@@ -615,6 +616,9 @@ mod tests {
         let i = fresh_info(T0, None, None, Some(&stored));
         assert_eq!((i.fetched_at, i.events), (T0, Some(ev)));
         let next_day = fresh_info(T0 + 86_400, None, None, Some(&stored));
-        assert_eq!(next_day.events, None, "yesterday's events are not today's");
+        assert_eq!(next_day.events, Some(vec![]), "yesterday's events are not today's: its tomorrow is");
+        assert_eq!(next_day.tomorrow, None);
+        let later = fresh_info(T0 + 2 * 86_400, None, None, Some(&stored));
+        assert_eq!(later.events, None, "nothing known about this day");
     }
 }
