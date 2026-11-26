@@ -385,7 +385,7 @@ impl IcsScanner {
                 (sd <= day && day < ed).then_some(DayEvent { start: None, end: None, title })
             }
             Some(t) => {
-                let (ed, et) = end.map_or((sd, Some(t)), |(d, s)| (d, s));
+                let (ed, et) = end.unwrap_or((sd, Some(t)));
                 let hm = |s: u32| ((s / 3600) as u8, (s % 3600 / 60) as u8);
                 if sd == day {
                     let end = (ed == day).then(|| et.map(hm)).flatten();

@@ -67,7 +67,7 @@ impl FrameBuffer {
     fn locate(x: u32, y: u32) -> (usize, bool) {
         assert!(x < WIDTH && y < HEIGHT, "pixel ({x},{y}) out of bounds");
         let i = (y * WIDTH + x) as usize;
-        (i / 2, i % 2 == 0)
+        (i / 2, i.is_multiple_of(2))
     }
 
     /// Panics if out of bounds.

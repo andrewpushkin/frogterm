@@ -6,7 +6,7 @@ use crate::date::Date;
 pub fn encode(unix: i64) -> [u8; 7] {
     let d = Date::from_days(unix.div_euclid(86_400));
     let s = unix.rem_euclid(86_400);
-    let bcd = |v: i64| ((v / 10) << 4 | v % 10) as u8;
+    let bcd = |v: i64| (((v / 10) << 4) | (v % 10)) as u8;
     [
         bcd(s % 60),
         bcd(s / 60 % 60),
@@ -29,7 +29,7 @@ pub fn decode(regs: [u8; 7]) -> Option<i64> {
     };
     let (sec, min, hour) = (bin(regs[0] & 0x7F)?, bin(regs[1] & 0x7F)?, bin(regs[2] & 0x3F)?);
     let (day, month, year) = (bin(regs[3] & 0x3F)?, bin(regs[5] & 0x1F)?, bin(regs[6])?);
-    if sec > 59 || min > 59 || hour > 23 || !(1..=12).contains(&month) || day < 1 || day > 31 {
+    if sec > 59 || min > 59 || hour > 23 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     let date = Date { year: 2000 + year as i32, month: month as u8, day: day as u8 };

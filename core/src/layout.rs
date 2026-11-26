@@ -659,7 +659,7 @@ mod tests {
         let right_margin = WIDTH as i32 - 1 - w.bottom_right().unwrap().x;
         assert_eq!(left_margin, right_margin, "not symmetric");
         let bottom = HEIGHT as i32 - 1 - e.bottom_right().unwrap().y;
-        assert!(bottom >= 0 && bottom <= 16, "not at the bottom: {bottom}");
+        assert!((0..=16).contains(&bottom), "not at the bottom: {bottom}");
         let covered = 2 * e.size.width * e.size.height;
         assert!(covered * 5 <= WIDTH * HEIGHT, "boxes cover {covered} px, more than 20 %");
     }

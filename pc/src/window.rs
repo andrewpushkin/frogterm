@@ -63,7 +63,7 @@ impl Shared {
         match self.led.load(Ordering::Relaxed) {
             0 => false,
             1 => true,
-            _ => START.get_or_init(Instant::now).elapsed().as_millis() / 250 % 2 == 0,
+            _ => (START.get_or_init(Instant::now).elapsed().as_millis() / 250).is_multiple_of(2),
         }
     }
 

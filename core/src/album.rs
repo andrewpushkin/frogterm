@@ -246,7 +246,8 @@ mod tests {
     #[test]
     fn url_key_tells_urls_apart() {
         let a = "https://lh3.googleusercontent.com/pw/A";
-        assert_eq!(url_key(a), url_key(&a.to_string()));
+        let copy = String::from(a); // same text, another allocation
+        assert_eq!(url_key(a), url_key(&copy));
         assert_ne!(url_key(a), url_key("https://lh3.googleusercontent.com/pw/B"));
     }
 
