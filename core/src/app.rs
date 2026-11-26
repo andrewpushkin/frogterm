@@ -375,7 +375,8 @@ pub fn compose(cfg: &Config, mut fb: FrameBuffer, info: &Info, now: i64, battery
         None => format!("{} {:02}:{:02}", cfg.place, now_hm.0, now_hm.1),
     };
     let agenda = calendar::agenda(info.events.clone(), info.tomorrow.clone(), now_hm);
-    draw_weather_box(&mut fb, info.forecast.as_ref().and_then(|f| f.window(now)), backdrop);
+    let window = info.forecast.as_ref().and_then(|f| f.window(now));
+    draw_weather_box(&mut fb, window.as_deref(), backdrop);
     draw_events_box(
         &mut fb,
         &EventsInfo {

@@ -441,6 +441,7 @@ fn fetch_weather(agent: &ureq::Agent, cfg: &Config) -> Result<Forecast> {
     let line: Vec<String> = f
         .slots
         .iter()
+        .step_by(weather::STEP_HOURS)
         .take(weather::SLOTS)
         .map(|s| format!("{:02}h {:.0}° {}%", s.hour, s.temp_c, s.precip_pct))
         .collect();

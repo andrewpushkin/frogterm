@@ -67,7 +67,8 @@ static SMALL_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB10_t
 static TEMP_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB18_tf>();
 
 // weather box rows (tops, relative to the box)
-const COL_W: i32 = 62;
+/// Seven columns (`weather::SLOTS`) across the box.
+const COL_W: i32 = 54;
 const HOUR_Y: i32 = 5;
 const ICON_CY: i32 = 34;
 const TEMP_Y: i32 = 50;
@@ -191,8 +192,8 @@ pub fn draw_weather_box(fb: &mut FrameBuffer, forecast: Option<&[HourSlot]>, bac
         pen.text(&mut t, &TITLE_FONT, "weather unavailable", mid, HorizontalAlignment::Center, Ink::Black);
         return;
     };
-    let left = (BOX_W as i32 - 6 * COL_W) / 2;
-    for (i, s) in slots.iter().take(6).enumerate() {
+    let left = (BOX_W as i32 - crate::weather::SLOTS as i32 * COL_W) / 2;
+    for (i, s) in slots.iter().take(crate::weather::SLOTS).enumerate() {
         let cx = o.x + left + COL_W * i as i32 + COL_W / 2;
         let at = |y: i32| Point::new(cx, o.y + y);
         let c = HorizontalAlignment::Center;
@@ -514,8 +515,8 @@ mod tests {
     use super::*;
 
     fn slots(temp: f32) -> Vec<HourSlot> {
-        (0..6)
-            .map(|i| HourSlot { hour: 6 + i, temp_c: temp + f32::from(i), precip_pct: i * 10, uv: 0.0, is_day: true, moon: 0.0, icon: Icon::Rain })
+        (0..crate::weather::SLOTS as u8)
+            .map(|i| HourSlot { hour: 6 + 2 * i, temp_c: temp + f32::from(i), precip_pct: i * 10, uv: 0.0, is_day: true, moon: 0.0, icon: Icon::Rain })
             .collect()
     }
 

@@ -88,7 +88,7 @@ impl Config {
             bail!("photo_batch must be 1..=20 (screens that fit in flash), got {}", c.photo_batch);
         }
         if !(1..=1080).contains(&c.refresh_minutes) {
-            bail!("refresh_minutes must be 1..=1080 (the 24 h forecast must still cover 6 hours)");
+            bail!("refresh_minutes must be 1..=1080 (at most 18 h between weather fetches)");
         }
         if c.update_hour > 23 {
             bail!("update_hour must be 0..=23, got {}", c.update_hour);
@@ -196,7 +196,7 @@ mod tests {
         assert!(Config::parse(&format!("{base}photo_batch = 0\n")).is_err());
         assert!(Config::parse(&format!("{base}photo_batch = 21\n")).is_err(), "only 20 screens fit in flash");
         assert!(Config::parse(&format!("{base}refresh_minutes = 0\n")).is_err());
-        assert!(Config::parse(&format!("{base}refresh_minutes = 1081\n")).is_err(), "24 h forecast covers 18 h + 6 shown");
+        assert!(Config::parse(&format!("{base}refresh_minutes = 1081\n")).is_err(), "at most 18 h between weather fetches");
     }
 
     #[test]

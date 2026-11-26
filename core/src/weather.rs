@@ -3,10 +3,13 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 
-/// Number of hourly slots shown on screen (current hour + 5).
-pub const SLOTS: usize = 6;
-/// Hours fetched, so a later offline update can still show the next 6 hours.
-pub const HOURS: usize = 24;
+/// Number of hourly slots shown on screen: now, +2 h, +4 h … +12 h.
+pub const SLOTS: usize = 7;
+/// Hours between two shown slots.
+pub const STEP_HOURS: usize = 2;
+/// Hours fetched (today and tomorrow), so every later offline update can show
+/// its own next 12 hours from the stored forecast.
+pub const HOURS: usize = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -64,11 +67,13 @@ impl Forecast {
         self.sun.iter().find(|s| s.date == date)
     }
 
-    /// The `SLOTS` hours starting with the hour that contains `now`, or `None`
-    /// if the stored forecast does not reach that far.
-    pub fn window(&self, now: i64) -> Option<&[HourSlot]> {
+    /// The hour that contains `now` and every `STEP_HOURS`-th hour after it,
+    /// up to `SLOTS` of them (fewer if the stored forecast ends sooner), or
+    /// `None` if the stored forecast no longer reaches `now`.
+    pub fn window(&self, now: i64) -> Option<Vec<HourSlot>> {
         let first = usize::try_from((now - self.start_unix).div_euclid(3600)).unwrap_or(0);
-        self.slots.get(first..first + SLOTS)
+        let w: Vec<HourSlot> = self.slots.iter().skip(first).step_by(STEP_HOURS).take(SLOTS).cloned().collect();
+        (!w.is_empty()).then_some(w)
     }
 }
 
@@ -210,7 +215,7 @@ mod tests {
                  "sunset":["2026-11-25T16:38","2026-11-26T16:38"]}}"#;
 
     #[test]
-    fn forecast_url_asks_for_six_local_hours() {
+    fn forecast_url_asks_for_two_days_of_local_hours() {
         let u = forecast_url(32.0853, 34.7818);
         assert!(u.starts_with("https://api.open-meteo.com/v1/forecast?"), "{u}");
         for part in [
@@ -220,14 +225,14 @@ mod tests {
             "daily=sunrise,sunset",
             "current=temperature_2m",
             "timezone=auto",
-            "forecast_hours=24",
+            "forecast_hours=48",
         ] {
             assert!(u.contains(part), "{u} lacks {part}");
         }
     }
 
     #[test]
-    fn parse_forecast_gives_six_slots_from_current_hour() {
+    fn parse_forecast_keeps_every_hour_from_the_current_one() {
         let f = parse_forecast(FORECAST).unwrap();
         assert_eq!(f.now, "13:00");
         assert_eq!(f.utc_offset_secs, 7200);
@@ -243,21 +248,47 @@ mod tests {
         assert_eq!(f.slots[5].hour, 18);
     }
 
+    /// `n` consecutive hours from 13:00 (UTC+2), as stored after a fetch.
+    fn hours(n: u8) -> Forecast {
+        let mut f = parse_forecast(FORECAST).unwrap();
+        f.slots = (0..n)
+            .map(|i| HourSlot { hour: (13 + i) % 24, temp_c: f32::from(i), precip_pct: 0, uv: 0.0, is_day: true, moon: 0.0, icon: Icon::Clear })
+            .collect();
+        f
+    }
+
     #[test]
-    fn window_starts_at_the_current_hour() {
-        let f = parse_forecast(FORECAST).unwrap();
+    fn window_is_now_and_every_second_hour_up_to_12_h() {
+        let f = hours(HOURS as u8);
         let w = f.window(f.start_unix + 30 * 60).unwrap();
         assert_eq!(w.len(), SLOTS);
-        assert_eq!(w[0].hour, 13);
+        let shown: Vec<u8> = w.iter().map(|s| s.hour).collect();
+        assert_eq!(shown, [13, 15, 17, 19, 21, 23, 1], "now, +2 h … +12 h");
         let w = f.window(f.start_unix - 600).unwrap();
         assert_eq!(w[0].hour, 13, "slightly before the first hour still starts there");
     }
 
     #[test]
-    fn window_needs_six_hours_ahead() {
-        let f = parse_forecast(FORECAST).unwrap(); // 7 hours: 13..19
-        assert_eq!(f.window(f.start_unix + 3600 + 5).unwrap()[0].hour, 14);
-        assert!(f.window(f.start_unix + 2 * 3600).is_none(), "only 5 hours left");
+    fn later_updates_take_the_current_hour_from_the_cache() {
+        let f = hours(HOURS as u8);
+        let w = f.window(f.start_unix + 7 * 3600 + 5).unwrap();
+        let shown: Vec<u8> = w.iter().map(|s| s.hour).collect();
+        assert_eq!(shown, [20, 22, 0, 2, 4, 6, 8]);
+    }
+
+    #[test]
+    fn a_short_cache_shows_what_it_still_has() {
+        let f = hours(7); // 13..19
+        let shown: Vec<u8> = f.window(f.start_unix).unwrap().iter().map(|s| s.hour).collect();
+        assert_eq!(shown, [13, 15, 17, 19]);
+        assert_eq!(f.window(f.start_unix + 6 * 3600).unwrap().len(), 1, "only 19:00 left");
+        assert!(f.window(f.start_unix + 7 * 3600).is_none(), "nothing left for now");
+    }
+
+    #[test]
+    fn a_day_old_fetch_still_covers_the_next_12_hours() {
+        let f = hours(HOURS as u8);
+        assert_eq!(f.window(f.start_unix + 24 * 3600).unwrap().len(), SLOTS);
     }
 
     #[test]
