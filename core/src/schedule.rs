@@ -249,10 +249,7 @@ mod tests {
         assert_eq!(plan_update(now, None, 3, 3600), UpdatePlan::RefreshInfo, "never fetched");
         // fetched 23:50 yesterday, now 00:05: recent, but the events are yesterday's
         let just_after_midnight = local(2026, 11, 26, 0, 5, 0);
-        assert_eq!(
-            plan_update(just_after_midnight, Some((just_after_midnight - 15 * 60, today)), 3, 3600),
-            UpdatePlan::RefreshInfo
-        );
+        assert_eq!(plan_update(just_after_midnight, Some((just_after_midnight - 15 * 60, today)), 3, 3600), UpdatePlan::RefreshInfo);
     }
 
     #[test]

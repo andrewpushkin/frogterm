@@ -6,8 +6,7 @@ pub use frogterm_core::app::Wake;
 use frogterm_core::buttons;
 
 /// All buttons, green first.
-pub const BUTTON_GPIOS: [i32; 3] =
-    [buttons::GREEN_GPIO as i32, buttons::NEXT_GPIO as i32, buttons::PREVIOUS_GPIO as i32];
+pub const BUTTON_GPIOS: [i32; 3] = [buttons::GREEN_GPIO as i32, buttons::NEXT_GPIO as i32, buttons::PREVIOUS_GPIO as i32];
 
 pub fn wake_cause() -> Wake {
     #[allow(non_upper_case_globals)]

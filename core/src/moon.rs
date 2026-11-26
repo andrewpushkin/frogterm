@@ -8,7 +8,11 @@ pub fn phase(unix_secs: i64) -> f32 {
     /// Mean synodic month in seconds (29.530588853 days).
     const SYNODIC: f64 = 29.530_588_853 * 86_400.0;
     let p = ((unix_secs as f64 - NEW_MOON) / SYNODIC).rem_euclid(1.0) as f32;
-    if p >= 1.0 { 0.0 } else { p }
+    if p >= 1.0 {
+        0.0
+    } else {
+        p
+    }
 }
 
 #[cfg(test)]

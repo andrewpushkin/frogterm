@@ -152,11 +152,7 @@ impl Device for Reterminal<'_> {
         let tick = |step: &str| log::info!("progress: {step}");
         log_heap("before Wi-Fi");
         // read the stored photo list from flash while Wi-Fi joins
-        let preload = if batch > 0 {
-            Some(crate::spawn_with_internal_stack("preload", 8 * 1024, || Store.load_list())?)
-        } else {
-            None
-        };
+        let preload = if batch > 0 { Some(crate::spawn_with_internal_stack("preload", 8 * 1024, || Store.load_list())?) } else { None };
         let modem = self.modem.take().ok_or_else(|| anyhow!("Wi-Fi was already used in this wake"))?;
         let cfg = self.cfg;
         let mut net = Net::connect(modem, self.sysloop.clone(), self.nvs_part.clone(), cfg.wifi_ssid, cfg.wifi_password, self.nvs.last_ap)?;
@@ -477,29 +473,26 @@ fn fetch_calendars(cfg: &Settings, today: frogterm_core::date::Date) -> Option<(
             .calendars
             .iter()
             .map(|url| {
-                std::thread::Builder::new()
-                    .name("calendar".into())
-                    .stack_size(BG_STACK)
-                    .spawn_scoped(s, move || {
-                        // one download, two days
-                        let (mut scan_today, mut scan_tomorrow) = (IcsScanner::new(today), IcsScanner::new(tomorrow));
-                        let r = net::get(url, &mut |c| {
-                            scan_today.feed(c);
-                            scan_tomorrow.feed(c);
-                            Ok(())
-                        });
-                        match r {
-                            Ok(r) if r.status == 200 => Some((scan_today.finish(), scan_tomorrow.finish())),
-                            Ok(r) => {
-                                log::warn!("calendar on {}: HTTP {}", host(url), r.status);
-                                None
-                            }
-                            Err(e) => {
-                                log::warn!("calendar on {}: {e:#}", host(url));
-                                None
-                            }
+                std::thread::Builder::new().name("calendar".into()).stack_size(BG_STACK).spawn_scoped(s, move || {
+                    // one download, two days
+                    let (mut scan_today, mut scan_tomorrow) = (IcsScanner::new(today), IcsScanner::new(tomorrow));
+                    let r = net::get(url, &mut |c| {
+                        scan_today.feed(c);
+                        scan_tomorrow.feed(c);
+                        Ok(())
+                    });
+                    match r {
+                        Ok(r) if r.status == 200 => Some((scan_today.finish(), scan_tomorrow.finish())),
+                        Ok(r) => {
+                            log::warn!("calendar on {}: HTTP {}", host(url), r.status);
+                            None
                         }
-                    })
+                        Err(e) => {
+                            log::warn!("calendar on {}: {e:#}", host(url));
+                            None
+                        }
+                    }
+                })
             })
             .collect();
         handles.into_iter().map(|h| h.ok().and_then(|h| h.join().ok()).flatten()).collect()

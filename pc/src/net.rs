@@ -21,11 +21,7 @@ impl std::fmt::Display for HttpStatus {
 impl std::error::Error for HttpStatus {}
 
 pub fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .user_agent(USER_AGENT)
-        .redirects(10)
-        .timeout(Duration::from_secs(30))
-        .build()
+    ureq::AgentBuilder::new().user_agent(USER_AGENT).redirects(10).timeout(Duration::from_secs(30)).build()
 }
 
 pub fn get_text(agent: &ureq::Agent, url: &str) -> Result<String> {
@@ -42,12 +38,7 @@ pub struct PageInfo {
 }
 
 /// Reads the whole album (share page + every next page), de-duplicated, in album order.
-pub fn fetch_album(
-    agent: &ureq::Agent,
-    share_link: &str,
-    max_pages: usize,
-    mut on_page: impl FnMut(&PageInfo),
-) -> Result<Vec<Photo>> {
+pub fn fetch_album(agent: &ureq::Agent, share_link: &str, max_pages: usize, mut on_page: impl FnMut(&PageInfo)) -> Result<Vec<Photo>> {
     let t = Instant::now();
     let resp = agent.get(share_link).call().map_err(http_err).context("album link")?;
     let final_url = resp.get_url().to_string();
@@ -110,9 +101,7 @@ fn check_landing(final_url: &str) -> Result<()> {
     let host = final_url.split('/').nth(2).unwrap_or("");
     match host {
         "photos.google.com" => Ok(()),
-        h if h.starts_with("consent.") => bail!(
-            "Google redirected to a cookie-consent page ({h}); the device cannot click through it"
-        ),
+        h if h.starts_with("consent.") => bail!("Google redirected to a cookie-consent page ({h}); the device cannot click through it"),
         h if h.starts_with("accounts.") => {
             bail!("Google asked for a login ({h}): the album is not shared as 'anyone with the link'")
         }
@@ -128,12 +117,7 @@ pub struct Jpeg {
 
 /// Downloads `photo` already converted by Google to a `w`×`h` JPEG.
 pub fn download_photo(agent: &ureq::Agent, photo: &Photo, w: u32, h: u32) -> Result<Jpeg> {
-    let resp = agent
-        .get(&photo.sized_url(w, h))
-        .set("Accept", "image/jpeg")
-        .call()
-        .map_err(http_err)
-        .context("download photo")?;
+    let resp = agent.get(&photo.sized_url(w, h)).set("Accept", "image/jpeg").call().map_err(http_err).context("download photo")?;
     let content_type = resp.header("content-type").unwrap_or("?").to_string();
     let mut bytes = Vec::new();
     resp.into_reader().read_to_end(&mut bytes)?;
@@ -163,9 +147,7 @@ fn sof_marker(b: &[u8]) -> Option<u8> {
 
 pub fn http_err(e: ureq::Error) -> anyhow::Error {
     match e {
-        ureq::Error::Status(code, r) => {
-            anyhow::Error::new(HttpStatus(code)).context(format!("from {}", redact_key(r.get_url())))
-        }
+        ureq::Error::Status(code, r) => anyhow::Error::new(HttpStatus(code)).context(format!("from {}", redact_key(r.get_url()))),
         other => anyhow!(other),
     }
 }

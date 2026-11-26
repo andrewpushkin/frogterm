@@ -37,12 +37,7 @@ impl<'d> Epd<'d> {
             &DriverConfig::new(),
             &Config::new().baudrate(Hertz(epd::SPI_HZ)),
         )?;
-        Ok(Self {
-            spi,
-            dc: PinDriver::output(dc)?,
-            rst: PinDriver::output(rst)?,
-            busy: PinDriver::input(busy, Pull::Up)?,
-        })
+        Ok(Self { spi, dc: PinDriver::output(dc)?, rst: PinDriver::output(rst)?, busy: PinDriver::input(busy, Pull::Up)? })
     }
 
     /// Reset, init, send the frame, refresh, power off, deep sleep.

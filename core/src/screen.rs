@@ -34,9 +34,7 @@ pub fn plan(photos: &[Photo], first: usize, fresh: usize, mut rand: impl FnMut(u
     if !photos[first].is_tall() {
         return full;
     }
-    let tall_others = |range: std::ops::Range<usize>| -> Vec<usize> {
-        range.filter(|&i| i != first && photos[i].is_tall()).collect()
-    };
+    let tall_others = |range: std::ops::Range<usize>| -> Vec<usize> { range.filter(|&i| i != first && photos[i].is_tall()).collect() };
     let mut partners = tall_others(0..fresh.min(photos.len()));
     if partners.is_empty() {
         partners = tall_others(0..photos.len());

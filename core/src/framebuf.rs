@@ -60,9 +60,7 @@ pub struct FrameBuffer {
 impl FrameBuffer {
     pub fn new(fill: Ink) -> Self {
         let c = fill.code();
-        Self {
-            data: vec![(c << 4) | c; (WIDTH * HEIGHT / 2) as usize],
-        }
+        Self { data: vec![(c << 4) | c; (WIDTH * HEIGHT / 2) as usize] }
     }
 
     /// Byte index and whether the pixel is the high (left) nibble.

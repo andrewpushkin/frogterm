@@ -80,10 +80,7 @@ impl Config {
             bail!("calendar links must be https://, got {bad:?}");
         }
         if frogterm_core::tz::Zone::parse(&c.timezone).is_none() {
-            bail!(
-                "timezone must be a POSIX TZ string like \"IST-2IDT,M3.4.4/26,M10.5.0\" (Israel), got {:?}",
-                c.timezone
-            );
+            bail!("timezone must be a POSIX TZ string like \"IST-2IDT,M3.4.4/26,M10.5.0\" (Israel), got {:?}", c.timezone);
         }
         if !(1..=20).contains(&c.photo_batch) {
             bail!("photo_batch must be 1..=20 (screens that fit in flash), got {}", c.photo_batch);
@@ -107,9 +104,8 @@ impl Config {
     }
 
     pub fn load(path: &Path) -> Result<Config> {
-        let text = std::fs::read_to_string(path).with_context(|| {
-            format!("cannot read {} (copy config.example.toml to config.toml and edit it)", path.display())
-        })?;
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read {} (copy config.example.toml to config.toml and edit it)", path.display()))?;
         Config::parse(&text).with_context(|| format!("bad config in {}", path.display()))
     }
 

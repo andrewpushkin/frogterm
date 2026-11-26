@@ -217,11 +217,14 @@ impl Device for Emulated {
     }
 
     fn led(&mut self, led: Led) {
-        log::info!("LED {}", match led {
-            Led::Off => "off (ready)",
-            Led::On => "on (the panel rests)",
-            Led::Blink => "blinking (working)",
-        });
+        log::info!(
+            "LED {}",
+            match led {
+                Led::Off => "off (ready)",
+                Led::On => "on (the panel rests)",
+                Led::Blink => "blinking (working)",
+            }
+        );
         self.ui.set_led(led);
     }
 
@@ -351,7 +354,13 @@ fn random_screen(agent: &ureq::Agent, list: &PhotoList, opacity: u8, rng: &mut S
 }
 
 /// Downloads and places every slot; on failure returns the photo index and the error.
-fn fill_slots(agent: &ureq::Agent, list: &PhotoList, slots: &[Slot], opacity: u8, fb: &mut FrameBuffer) -> Result<(), (usize, anyhow::Error)> {
+fn fill_slots(
+    agent: &ureq::Agent,
+    list: &PhotoList,
+    slots: &[Slot],
+    opacity: u8,
+    fb: &mut FrameBuffer,
+) -> Result<(), (usize, anyhow::Error)> {
     for s in slots {
         let p = &list.photos[s.photo];
         let (w, h) = (s.area.size.width, s.area.size.height);
@@ -527,14 +536,7 @@ mod tests {
 
     #[test]
     fn state_round_trips_through_text() {
-        let s = State {
-            target: 1_795_600_000,
-            attempt: 2,
-            stock_count: 10,
-            seen: 0b1011,
-            last_refresh: Some(1_795_590_000),
-            current: 3,
-        };
+        let s = State { target: 1_795_600_000, attempt: 2, stock_count: 10, seen: 0b1011, last_refresh: Some(1_795_590_000), current: 3 };
         assert_eq!(state_from_text(&state_to_text(&s)), Some(s));
         assert_eq!(state_from_text(&state_to_text(&State::default())), Some(State::default()));
         assert_eq!(state_from_text("garbage"), None);

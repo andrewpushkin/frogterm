@@ -20,18 +20,10 @@ pub fn dither_into(rgb: &[u8], fb: &mut FrameBuffer) -> Result<()> {
 /// Each area is dithered on its own, so no error bleeds across area edges.
 pub fn dither_area(rgb: &[u8], area: &Rectangle, fb: &mut FrameBuffer) -> Result<()> {
     let screen = Rectangle::new(Point::zero(), Size::new(WIDTH, HEIGHT));
-    ensure!(
-        area.top_left.x >= 0 && area.top_left.y >= 0 && screen.intersection(area) == *area,
-        "area {area:?} is not inside the screen"
-    );
+    ensure!(area.top_left.x >= 0 && area.top_left.y >= 0 && screen.intersection(area) == *area, "area {area:?} is not inside the screen");
     let (w, h) = (area.size.width as usize, area.size.height as usize);
     let (x0, y0) = (area.top_left.x as u32, area.top_left.y as u32);
-    ensure!(
-        rgb.len() == w * h * 3,
-        "expected a {w}x{h} RGB image ({} bytes), got {} bytes",
-        w * h * 3,
-        rgb.len()
-    );
+    ensure!(rgb.len() == w * h * 3, "expected a {w}x{h} RGB image ({} bytes), got {} bytes", w * h * 3, rgb.len());
     // error accumulators in 1/16 units, one pixel of padding on each side
     let mut cur = vec![[0i32; 3]; w + 2];
     let mut next = vec![[0i32; 3]; w + 2];

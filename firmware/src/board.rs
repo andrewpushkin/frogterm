@@ -26,11 +26,7 @@ pub struct Board<'d> {
 
 impl<'d> Board<'d> {
     /// Also takes over the LED (from its deep-sleep hold) and starts its blinker.
-    pub fn new(
-        battery_enable: impl OutputPin + 'd,
-        sd_power: impl OutputPin + 'd,
-        sd_cs: impl OutputPin + 'd,
-    ) -> Result<Self> {
+    pub fn new(battery_enable: impl OutputPin + 'd, sd_power: impl OutputPin + 'd, sd_cs: impl OutputPin + 'd) -> Result<Self> {
         let mut sd_power = PinDriver::output(sd_power)?;
         sd_power.set_low()?;
         let mut sd_cs = PinDriver::output(sd_cs)?;
@@ -156,10 +152,8 @@ fn read_adc1_ch0_mv() -> Option<u32> {
         if sys::adc_oneshot_new_unit(&unit_cfg, &mut unit) != sys::ESP_OK {
             return None;
         }
-        let chan_cfg = sys::adc_oneshot_chan_cfg_t {
-            atten: sys::adc_atten_t_ADC_ATTEN_DB_12,
-            bitwidth: sys::adc_bitwidth_t_ADC_BITWIDTH_DEFAULT,
-        };
+        let chan_cfg =
+            sys::adc_oneshot_chan_cfg_t { atten: sys::adc_atten_t_ADC_ATTEN_DB_12, bitwidth: sys::adc_bitwidth_t_ADC_BITWIDTH_DEFAULT };
         sys::adc_oneshot_config_channel(unit, sys::adc_channel_t_ADC_CHANNEL_0, &chan_cfg);
         let mut cali: sys::adc_cali_handle_t = std::ptr::null_mut();
         let cali_cfg = sys::adc_cali_curve_fitting_config_t {

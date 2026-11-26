@@ -233,7 +233,14 @@ mod tests {
     #[test]
     fn israel_zone_matches_the_built_in_rules() {
         let z = Zone::parse(ISRAEL).unwrap();
-        for (y, m, d, h, min) in [(2026, 3, 26, 23, 59), (2026, 3, 27, 0, 0), (2026, 10, 24, 22, 59), (2026, 10, 24, 23, 0), (2027, 3, 26, 0, 0), (2026, 7, 1, 12, 0)] {
+        for (y, m, d, h, min) in [
+            (2026, 3, 26, 23, 59),
+            (2026, 3, 27, 0, 0),
+            (2026, 10, 24, 22, 59),
+            (2026, 10, 24, 23, 0),
+            (2027, 3, 26, 0, 0),
+            (2026, 7, 1, 12, 0),
+        ] {
             let t = utc(y, m, d, h, min);
             assert_eq!(z.offset(t), israel_offset(t), "{y}-{m}-{d} {h}:{min}");
         }

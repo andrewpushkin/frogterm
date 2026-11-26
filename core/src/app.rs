@@ -12,7 +12,9 @@ use crate::date::Date;
 use crate::dither::{dither_area, veil};
 use crate::framebuf::FrameBuffer;
 use crate::info::Info;
-use crate::layout::{draw_events_box, draw_photo_counter, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo};
+use crate::layout::{
+    draw_events_box, draw_photo_counter, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo,
+};
 use crate::schedule::{self, UpdatePlan, WakePlan};
 use crate::weather::Forecast;
 use crate::{battery, stock, tz};
@@ -371,21 +373,19 @@ fn sleep_until_next(dev: &mut impl Device, state: &mut State, now: Option<i64>, 
 
 /// Weather and calendar of a fetch; whatever failed falls back to the stored
 /// ones (events only of today and tomorrow).
-pub fn fresh_info(
-    now: i64,
-    forecast: Option<Forecast>,
-    events: Option<(Vec<DayEvent>, Vec<DayEvent>)>,
-    stored: Option<Info>,
-) -> Info {
+pub fn fresh_info(now: i64, forecast: Option<Forecast>, events: Option<(Vec<DayEvent>, Vec<DayEvent>)>, stored: Option<Info>) -> Info {
     let today = tz::to_local(now).0;
     let (stored_forecast, stored_events) = match stored {
         Some(i) => {
             let days = today.days_since_epoch() - i.date.days_since_epoch();
-            (i.forecast, match days {
-                0 => (i.events, i.tomorrow),
-                1 => (i.tomorrow, None),
-                _ => (None, None),
-            })
+            (
+                i.forecast,
+                match days {
+                    0 => (i.events, i.tomorrow),
+                    1 => (i.tomorrow, None),
+                    _ => (None, None),
+                },
+            )
         }
         None => (None, (None, None)),
     };

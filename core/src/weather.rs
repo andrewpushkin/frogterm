@@ -98,23 +98,13 @@ pub fn parse_forecast(json: &str) -> Result<Forecast> {
     if let Some(reason) = v["reason"].as_str() {
         bail!("Open-Meteo error: {reason}");
     }
-    let now = v["current"]["time"]
-        .as_str()
-        .and_then(clock)
-        .ok_or_else(|| anyhow!("forecast has no current time"))?
-        .to_string();
+    let now = v["current"]["time"].as_str().and_then(clock).ok_or_else(|| anyhow!("forecast has no current time"))?.to_string();
     let h = &v["hourly"];
     let times = h["time"].as_array().ok_or_else(|| anyhow!("forecast has no hourly times"))?;
     let mut slots = Vec::with_capacity(HOURS);
     for (i, t) in times.iter().take(HOURS).enumerate() {
-        let hour = t
-            .as_str()
-            .and_then(clock)
-            .and_then(|c| c[..2].parse::<u8>().ok())
-            .ok_or_else(|| anyhow!("bad hourly time {t}"))?;
-        let temp_c = h["temperature_2m"][i]
-            .as_f64()
-            .ok_or_else(|| anyhow!("no temperature for {hour}:00"))? as f32;
+        let hour = t.as_str().and_then(clock).and_then(|c| c[..2].parse::<u8>().ok()).ok_or_else(|| anyhow!("bad hourly time {t}"))?;
+        let temp_c = h["temperature_2m"][i].as_f64().ok_or_else(|| anyhow!("no temperature for {hour}:00"))? as f32;
         let precip_pct = h["precipitation_probability"][i].as_u64().unwrap_or(0).min(100) as u8;
         let code = h["weather_code"][i].as_u64().and_then(|c| u16::try_from(c).ok()).unwrap_or(u16::MAX);
         let uv = h["uv_index"][i].as_f64().unwrap_or(0.0) as f32;
@@ -177,10 +167,7 @@ pub fn icon_for(code: u16) -> Icon {
 
 /// City lookup request (Open-Meteo geocoding).
 pub fn geocode_url(city: &str) -> String {
-    format!(
-        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en&format=json",
-        crate::url::percent_encode(city)
-    )
+    format!("https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en&format=json", crate::url::percent_encode(city))
 }
 
 /// First match of a geocoding response.
@@ -192,7 +179,6 @@ pub fn parse_geocode(json: &str) -> Result<Place> {
         _ => bail!("city not found"),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -251,7 +237,15 @@ mod tests {
     fn hours(n: u8) -> Forecast {
         let mut f = parse_forecast(FORECAST).unwrap();
         f.slots = (0..n)
-            .map(|i| HourSlot { hour: (13 + i) % 24, temp_c: f32::from(i), precip_pct: 0, uv: 0.0, is_day: true, moon: 0.0, icon: Icon::Clear })
+            .map(|i| HourSlot {
+                hour: (13 + i) % 24,
+                temp_c: f32::from(i),
+                precip_pct: 0,
+                uv: 0.0,
+                is_day: true,
+                moon: 0.0,
+                icon: Icon::Clear,
+            })
             .collect();
         f
     }
@@ -355,10 +349,7 @@ mod tests {
     fn parse_geocode_takes_first_result() {
         let json = r#"{"results":[{"id":294801,"name":"Tel Aviv","latitude":32.08088,"longitude":34.78057,
             "country":"Israel","timezone":"Asia/Jerusalem"}],"generationtime_ms":0.5}"#;
-        assert_eq!(
-            parse_geocode(json).unwrap(),
-            Place { name: "Tel Aviv".into(), latitude: 32.08088, longitude: 34.78057 }
-        );
+        assert_eq!(parse_geocode(json).unwrap(), Place { name: "Tel Aviv".into(), latitude: 32.08088, longitude: 34.78057 });
     }
 
     #[test]

@@ -61,8 +61,7 @@ pub fn visual_runs(text: &str) -> Vec<Run> {
             .collect()
     };
     let mut out = Vec::with_capacity(segs.len());
-    let order: Box<dyn Iterator<Item = (Class, String)>> =
-        if rtl { Box::new(segs.into_iter().rev()) } else { Box::new(segs.into_iter()) };
+    let order: Box<dyn Iterator<Item = (Class, String)>> = if rtl { Box::new(segs.into_iter().rev()) } else { Box::new(segs.into_iter()) };
     for (class, s) in order {
         let (text, hebrew) = match class {
             Class::Hebrew => (reversed(&s, true), true),
@@ -174,7 +173,8 @@ mod tests {
             let mut fb = FrameBuffer::new(Ink::White);
             let w = draw_mixed(&mut fb, text, Point::new(10, 10), Ink::Black);
             assert!(w > 10, "{text}: width {w}");
-            let inked = (10..30).flat_map(|y| (10..10 + w as u32).map(move |x| (x, y))).filter(|&(x, y)| fb.get(x, y) == Ink::Black).count();
+            let inked =
+                (10..30).flat_map(|y| (10..10 + w as u32).map(move |x| (x, y))).filter(|&(x, y)| fb.get(x, y) == Ink::Black).count();
             assert!(inked > 10, "{text}: nothing drawn (missing glyphs?)");
         }
     }

@@ -72,10 +72,7 @@ pub const RPC_URL: &str = "https://photos.google.com/_/PhotosUi/data/batchexecut
 /// Album id and key from the URL the share link redirects to:
 /// `https://photos.google.com/share/<album_id>?key=<key>`.
 pub fn ids_from_share_url(url: &str) -> Result<(String, String)> {
-    let rest = url
-        .split_once("/share/")
-        .map(|(_, r)| r)
-        .ok_or_else(|| anyhow!("not a photos.google.com/share/ URL"))?;
+    let rest = url.split_once("/share/").map(|(_, r)| r).ok_or_else(|| anyhow!("not a photos.google.com/share/ URL"))?;
     let (id, query) = rest.split_once('?').ok_or_else(|| anyhow!("share URL has no ?key="))?;
     let key = query
         .split('&')
@@ -87,9 +84,7 @@ pub fn ids_from_share_url(url: &str) -> Result<(String, String)> {
 
 /// First page of the album from the share page HTML.
 pub fn parse_share_page(html: &str) -> Result<AlbumPage> {
-    let start = html
-        .find(DS1_START)
-        .ok_or_else(|| anyhow!("album data block (ds:1) not found on the share page"))?;
+    let start = html.find(DS1_START).ok_or_else(|| anyhow!("album data block (ds:1) not found on the share page"))?;
     let block = &html[start..];
     let data = block.find("data:").ok_or_else(|| anyhow!("ds:1 block has no data"))? + "data:".len();
     let end = block.find(DS1_END).ok_or_else(|| anyhow!("ds:1 block is not terminated"))?;
@@ -198,9 +193,7 @@ pub fn parse_rpc_response(body: &str) -> Result<AlbumPage> {
         .find(|l| l.starts_with(&prefix))
         .ok_or_else(|| anyhow!("no {RPC_ID} result in response (format changed or request rejected)"))?;
     let outer: Value = serde_json::from_str(line).context("response chunk is not JSON")?;
-    let inner = outer[0][2]
-        .as_str()
-        .ok_or_else(|| anyhow!("{RPC_ID} result has no payload (album key wrong or link sharing off?)"))?;
+    let inner = outer[0][2].as_str().ok_or_else(|| anyhow!("{RPC_ID} result has no payload (album key wrong or link sharing off?)"))?;
     let payload: Value = serde_json::from_str(inner).context("payload is not JSON")?;
     parse_payload(&payload)
 }

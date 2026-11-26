@@ -12,9 +12,7 @@
 //! ```
 
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{
-    Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Triangle,
-};
+use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Triangle};
 use u8g2_fonts::fonts;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::FontRenderer;
@@ -115,19 +113,12 @@ pub fn events_rect() -> Rectangle {
 
 /// Bottom-right box.
 pub fn weather_rect() -> Rectangle {
-    Rectangle::new(
-        Point::new((WIDTH - MARGIN - BOX_W) as i32, (HEIGHT - MARGIN - BOX_H) as i32),
-        Size::new(BOX_W, BOX_H),
-    )
+    Rectangle::new(Point::new((WIDTH - MARGIN - BOX_W) as i32, (HEIGHT - MARGIN - BOX_H) as i32), Size::new(BOX_W, BOX_H))
 }
 
 /// The box outline (and white fill for `Solid`); everything drawn through the
 /// returned target is clipped to the box, so text can never spill onto the photo.
-fn frame<'a>(
-    fb: &'a mut FrameBuffer,
-    r: &Rectangle,
-    backdrop: Backdrop,
-) -> embedded_graphics::draw_target::Clipped<'a, FrameBuffer> {
+fn frame<'a>(fb: &'a mut FrameBuffer, r: &Rectangle, backdrop: Backdrop) -> embedded_graphics::draw_target::Clipped<'a, FrameBuffer> {
     let mut t = fb.clipped(r);
     let style = match backdrop {
         Backdrop::Solid => PrimitiveStyleBuilder::new()
@@ -136,11 +127,9 @@ fn frame<'a>(
             .stroke_width(2)
             .stroke_alignment(StrokeAlignment::Inside)
             .build(),
-        Backdrop::Clear => PrimitiveStyleBuilder::new()
-            .stroke_color(Ink::Black)
-            .stroke_width(1)
-            .stroke_alignment(StrokeAlignment::Inside)
-            .build(),
+        Backdrop::Clear => {
+            PrimitiveStyleBuilder::new().stroke_color(Ink::Black).stroke_width(1).stroke_alignment(StrokeAlignment::Inside).build()
+        }
     };
     let _ = r.into_styled(style).draw(&mut t);
     t
@@ -243,9 +232,7 @@ pub fn draw_events_box(fb: &mut FrameBuffer, info: &EventsInfo, backdrop: Backdr
     // status holds the configured place name, which may be Cyrillic or Hebrew
     let status_x = right - mixed_width(info.status);
     pen.mixed(&mut t, info.status, at(status_x, HEADER_Y + 1), Ink::Black);
-    let _ = Line::new(at(PAD, RULE_Y), at(BOX_W as i32 - PAD, RULE_Y))
-        .into_styled(PrimitiveStyle::with_stroke(Ink::Black, 1))
-        .draw(&mut t);
+    let _ = Line::new(at(PAD, RULE_Y), at(BOX_W as i32 - PAD, RULE_Y)).into_styled(PrimitiveStyle::with_stroke(Ink::Black, 1)).draw(&mut t);
 
     let events = match info.events {
         None => {
@@ -259,9 +246,7 @@ pub fn draw_events_box(fb: &mut FrameBuffer, info: &EventsInfo, backdrop: Backdr
         Some(e) => e,
     };
     // titles start just after the widest possible time label
-    let time_w = SMALL_FONT
-        .get_rendered_dimensions("00:00-00:00", Point::zero(), VerticalPosition::Top)
-        .map_or(80, |d| d.advance.x);
+    let time_w = SMALL_FONT.get_rendered_dimensions("00:00-00:00", Point::zero(), VerticalPosition::Top).map_or(80, |d| d.advance.x);
     let title_x = PAD + time_w + 8;
     let shown = if events.len() > EVENT_ROWS { EVENT_ROWS - 1 } else { events.len() };
     for (i, e) in events.iter().take(shown).enumerate() {
@@ -340,12 +325,14 @@ fn sun_glyph<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point, up: bool, plate: b
     }
     // half disc above the horizon line
     let disc = PrimitiveStyleBuilder::new().fill_color(Ink::Yellow).stroke_color(Ink::Red).stroke_width(1).build();
-    let _ = Circle::with_center(p + Point::new(5, 9), 9)
-        .into_styled(disc)
-        .draw(&mut t.clipped(&Rectangle::new(p, Size::new(11, 9))));
+    let _ = Circle::with_center(p + Point::new(5, 9), 9).into_styled(disc).draw(&mut t.clipped(&Rectangle::new(p, Size::new(11, 9))));
     let _ = Line::new(p + Point::new(0, 9), p + Point::new(10, 9)).into_styled(PrimitiveStyle::with_stroke(Ink::Black, 1)).draw(t);
     // arrow above the sun
-    let tip = if up { (p + Point::new(5, 0), p + Point::new(2, 3), p + Point::new(8, 3)) } else { (p + Point::new(5, 3), p + Point::new(2, 0), p + Point::new(8, 0)) };
+    let tip = if up {
+        (p + Point::new(5, 0), p + Point::new(2, 3), p + Point::new(8, 3))
+    } else {
+        (p + Point::new(5, 3), p + Point::new(2, 0), p + Point::new(8, 0))
+    };
     let _ = Triangle::new(tip.0, tip.1, tip.2).into_styled(PrimitiveStyle::with_fill(Ink::Black)).draw(t);
 }
 
@@ -391,9 +378,7 @@ pub fn draw_icon<D: DrawTarget<Color = Ink>>(target: &mut D, icon: Icon, center:
         Icon::Cloudy => cloud(&mut t, &g, (0, 2)),
         Icon::Fog => {
             for (y, x0, x1) in [(-10, -14, 12), (-2, -17, 17), (6, -12, 15), (14, -16, 10)] {
-                let _ = Line::new(g.p(x0, y), g.p(x1, y))
-                    .into_styled(PrimitiveStyle::with_stroke(line_ink, 2))
-                    .draw(&mut t);
+                let _ = Line::new(g.p(x0, y), g.p(x1, y)).into_styled(PrimitiveStyle::with_stroke(line_ink, 2)).draw(&mut t);
             }
         }
         Icon::Drizzle => {
@@ -532,7 +517,15 @@ mod tests {
 
     fn slots(temp: f32) -> Vec<HourSlot> {
         (0..crate::weather::SLOTS as u8)
-            .map(|i| HourSlot { hour: 6 + 2 * i, temp_c: temp + f32::from(i), precip_pct: i * 10, uv: 0.0, is_day: true, moon: 0.0, icon: Icon::Rain })
+            .map(|i| HourSlot {
+                hour: 6 + 2 * i,
+                temp_c: temp + f32::from(i),
+                precip_pct: i * 10,
+                uv: 0.0,
+                is_day: true,
+                moon: 0.0,
+                icon: Icon::Rain,
+            })
             .collect()
     }
 
@@ -559,7 +552,19 @@ mod tests {
     fn agenda(ev: Option<&[DayEvent]>) -> FrameBuffer {
         let mut fb = FrameBuffer::new(Ink::Green);
         let ev = ev.map(refs);
-        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c: None, battery_pct: None, events: ev.as_deref(), tomorrow: false, sun: None }, Backdrop::Solid);
+        draw_events_box(
+            &mut fb,
+            &EventsInfo {
+                date: "Wed 25 Nov",
+                status: "Tel Aviv 06:00",
+                room_c: None,
+                battery_pct: None,
+                events: ev.as_deref(),
+                tomorrow: false,
+                sun: None,
+            },
+            Backdrop::Solid,
+        );
         fb
     }
 
@@ -597,7 +602,8 @@ mod tests {
     fn photo_date_sits_in_the_top_right_corner_of_its_photo() {
         let half = (WIDTH - crate::screen::GAP) / 2;
         let right = Rectangle::new(Point::new((WIDTH - half) as i32, 0), Size::new(half, HEIGHT));
-        for area in [Rectangle::new(Point::zero(), Size::new(WIDTH, HEIGHT)), Rectangle::new(Point::zero(), Size::new(half, HEIGHT)), right] {
+        for area in [Rectangle::new(Point::zero(), Size::new(WIDTH, HEIGHT)), Rectangle::new(Point::zero(), Size::new(half, HEIGHT)), right]
+        {
             let mut fb = FrameBuffer::new(Ink::Green);
             draw_photo_date(&mut fb, &area, Date { year: 2026, month: 11, day: 7 });
             let corner = photo_date_rect(&area);
@@ -725,12 +731,19 @@ mod tests {
         let mut fb = FrameBuffer::new(Ink::Green);
         draw_weather_box(&mut fb, Some(s.iter()), Backdrop::Clear);
         let ev = refs(&ev);
-        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow: false, sun: None }, Backdrop::Clear);
+        draw_events_box(
+            &mut fb,
+            &EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow: false, sun: None },
+            Backdrop::Clear,
+        );
         for r in [weather_rect(), events_rect()] {
             untouched_outside_both(&fb);
             let (x0, y0) = (r.top_left.x as u32, r.top_left.y as u32);
             let count = |ink| {
-                (0..r.size.height).flat_map(|dy| (0..r.size.width).map(move |dx| (dx, dy))).filter(|&(dx, dy)| fb.get(x0 + dx, y0 + dy) == ink).count()
+                (0..r.size.height)
+                    .flat_map(|dy| (0..r.size.width).map(move |dx| (dx, dy)))
+                    .filter(|&(dx, dy)| fb.get(x0 + dx, y0 + dy) == ink)
+                    .count()
             };
             let area = (r.size.width * r.size.height) as usize;
             assert!(count(Ink::Green) > area / 2, "photo should mostly show through");
@@ -752,7 +765,8 @@ mod tests {
 
     fn header(room_c: Option<f32>, battery_pct: Option<u8>) -> FrameBuffer {
         let mut fb = FrameBuffer::new(Ink::Green);
-        let info = EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c, battery_pct, events: Some(&[]), tomorrow: false, sun: None };
+        let info =
+            EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c, battery_pct, events: Some(&[]), tomorrow: false, sun: None };
         draw_events_box(&mut fb, &info, Backdrop::Solid);
         fb
     }
@@ -760,7 +774,10 @@ mod tests {
     fn header_count(fb: &FrameBuffer, ink: Ink) -> usize {
         let r = events_rect();
         let (x0, y0) = (r.top_left.x as u32, r.top_left.y as u32);
-        (2..RULE_Y as u32).flat_map(|dy| (2..r.size.width - 2).map(move |dx| (dx, dy))).filter(|&(dx, dy)| fb.get(x0 + dx, y0 + dy) == ink).count()
+        (2..RULE_Y as u32)
+            .flat_map(|dy| (2..r.size.width - 2).map(move |dx| (dx, dy)))
+            .filter(|&(dx, dy)| fb.get(x0 + dx, y0 + dy) == ink)
+            .count()
     }
 
     #[test]
@@ -778,7 +795,8 @@ mod tests {
         let ev = refs(&ev);
         let draw = |tomorrow| {
             let mut fb = FrameBuffer::new(Ink::Green);
-            let info = EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow, sun: None };
+            let info =
+                EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow, sun: None };
             draw_events_box(&mut fb, &info, Backdrop::Solid);
             fb
         };
@@ -851,7 +869,15 @@ mod tests {
     fn header_shows_sunrise_and_sunset() {
         let draw = |sun| {
             let mut fb = FrameBuffer::new(Ink::Green);
-            let info = EventsInfo { date: "Wed 25 Nov", status: "19:10", room_c: None, battery_pct: None, events: Some(&[]), tomorrow: false, sun };
+            let info = EventsInfo {
+                date: "Wed 25 Nov",
+                status: "19:10",
+                room_c: None,
+                battery_pct: None,
+                events: Some(&[]),
+                tomorrow: false,
+                sun,
+            };
             draw_events_box(&mut fb, &info, Backdrop::Solid);
             fb
         };
@@ -866,17 +892,9 @@ mod tests {
         let c = Point::new(100, 100);
         let half = (ICON_SIZE / 2) as i32;
         let square = Rectangle::new(c - Point::new(half, half), Size::new(ICON_SIZE, ICON_SIZE));
-        for icon in [
-            Icon::Clear,
-            Icon::PartlyCloudy,
-            Icon::Cloudy,
-            Icon::Fog,
-            Icon::Drizzle,
-            Icon::Rain,
-            Icon::Showers,
-            Icon::Thunder,
-            Icon::Snow,
-        ] {
+        for icon in
+            [Icon::Clear, Icon::PartlyCloudy, Icon::Cloudy, Icon::Fog, Icon::Drizzle, Icon::Rain, Icon::Showers, Icon::Thunder, Icon::Snow]
+        {
             let mut fb = FrameBuffer::new(Ink::White);
             draw_icon(&mut fb, icon, c, None);
             let mut drawn = 0;

@@ -7,17 +7,8 @@ use crate::weather::{Forecast, HourSlot, Icon};
 
 /// Bump when the format gains fields, so data from older firmware is fetched again.
 const HEADER: &str = "frogterm-info v3";
-const ICONS: [Icon; 9] = [
-    Icon::Clear,
-    Icon::PartlyCloudy,
-    Icon::Cloudy,
-    Icon::Fog,
-    Icon::Drizzle,
-    Icon::Rain,
-    Icon::Showers,
-    Icon::Thunder,
-    Icon::Snow,
-];
+const ICONS: [Icon; 9] =
+    [Icon::Clear, Icon::PartlyCloudy, Icon::Cloudy, Icon::Fog, Icon::Drizzle, Icon::Rain, Icon::Showers, Icon::Thunder, Icon::Snow];
 
 fn hm(t: Option<(u8, u8)>) -> String {
     t.map_or("-".into(), |(h, m)| format!("{h:02}:{m:02}"))
@@ -78,14 +69,7 @@ impl Info {
                 }
                 for sd in &f.sun {
                     let d = sd.date;
-                    s.push_str(&format!(
-                        "sun {:04}-{:02}-{:02} {} {}\n",
-                        d.year,
-                        d.month,
-                        d.day,
-                        hm(Some(sd.rise)),
-                        hm(Some(sd.set))
-                    ));
+                    s.push_str(&format!("sun {:04}-{:02}-{:02} {} {}\n", d.year, d.month, d.day, hm(Some(sd.rise)), hm(Some(sd.set))));
                 }
             }
         }
@@ -143,7 +127,8 @@ impl Info {
                 "sun" => {
                     let mut f = rest.split(' ');
                     let ds = f.next()?;
-                    let date = Date { year: ds.get(0..4)?.parse().ok()?, month: ds.get(5..7)?.parse().ok()?, day: ds.get(8..10)?.parse().ok()? };
+                    let date =
+                        Date { year: ds.get(0..4)?.parse().ok()?, month: ds.get(5..7)?.parse().ok()?, day: ds.get(8..10)?.parse().ok()? };
                     let rise = parse_hm(f.next()?)??;
                     let set = parse_hm(f.next()?)??;
                     forecast.as_mut()?.sun.push(crate::weather::SunDay { date, rise, set });
@@ -170,7 +155,8 @@ mod tests {
     use super::*;
 
     fn info() -> Info {
-        let icons = [Icon::Clear, Icon::PartlyCloudy, Icon::Cloudy, Icon::Fog, Icon::Drizzle, Icon::Rain, Icon::Showers, Icon::Thunder, Icon::Snow];
+        let icons =
+            [Icon::Clear, Icon::PartlyCloudy, Icon::Cloudy, Icon::Fog, Icon::Drizzle, Icon::Rain, Icon::Showers, Icon::Thunder, Icon::Snow];
         Info {
             fetched_at: 1_795_600_000,
             date: Date { year: 2026, month: 11, day: 25 },

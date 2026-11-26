@@ -102,9 +102,8 @@ pub fn duration(secs: u64) -> String {
 
 /// Runs the window until it is closed; clicks and keys go to `presses`.
 pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
-    let mut window = Window::new("frogterm - reTerminal E1002 emulator", W, H, WindowOptions::default()).map_err(|e| {
-        anyhow!("cannot open a window ({e}); without a display run `make emulator ARGS=--once`")
-    })?;
+    let mut window = Window::new("frogterm - reTerminal E1002 emulator", W, H, WindowOptions::default())
+        .map_err(|e| anyhow!("cannot open a window ({e}); without a display run `make emulator ARGS=--once`"))?;
     window.set_target_fps(30);
     let mut pixels = vec![0u32; W * H];
     let mut panel = vec![0x00ff_ffffu32; W * HEIGHT as usize];

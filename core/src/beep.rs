@@ -16,13 +16,8 @@ pub const WAIT: &[Tone] = &[Tone { hz: 2700, ms: 40 }, Tone { hz: 0, ms: 60 }, T
 pub const PRESS: &[Tone] = &[Tone { hz: 3000, ms: 50 }];
 /// Interval of the `WAIT` pip-pip.
 pub const WAIT_EVERY_MS: u64 = 2000;
-pub const ERROR: &[Tone] = &[
-    Tone { hz: 1000, ms: 100 },
-    Tone { hz: 0, ms: 80 },
-    Tone { hz: 1000, ms: 100 },
-    Tone { hz: 0, ms: 80 },
-    Tone { hz: 1000, ms: 100 },
-];
+pub const ERROR: &[Tone] =
+    &[Tone { hz: 1000, ms: 100 }, Tone { hz: 0, ms: 80 }, Tone { hz: 1000, ms: 100 }, Tone { hz: 0, ms: 80 }, Tone { hz: 1000, ms: 100 }];
 
 #[cfg(test)]
 mod tests {

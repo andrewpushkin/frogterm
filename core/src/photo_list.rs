@@ -67,13 +67,7 @@ impl PhotoList {
 /// The list to keep after an album refresh. `complete` = every page was read.
 /// A failed or partial refresh keeps the old list if there is one; with no old
 /// list, a partial one is better than nothing.
-pub fn after_refresh(
-    old: Option<PhotoList>,
-    fetched: Vec<Photo>,
-    complete: bool,
-    album_url: &str,
-    now: u64,
-) -> Option<PhotoList> {
+pub fn after_refresh(old: Option<PhotoList>, fetched: Vec<Photo>, complete: bool, album_url: &str, now: u64) -> Option<PhotoList> {
     let fresh = PhotoList { album_url: album_url.to_string(), fetched_at: now, photos: fetched };
     match (complete && !fresh.photos.is_empty(), old) {
         (true, _) => Some(fresh),
@@ -110,7 +104,8 @@ mod tests {
     #[test]
     fn list_without_dates_is_read_again() {
         // v2 had no dates: ignoring it makes the next batch re-read the album
-        let v2 = "frogterm-photo-list v2\nalbum https://photos.app.goo.gl/abc\nfetched 1\n3000 4000 https://lh3.googleusercontent.com/pw/A\n";
+        let v2 =
+            "frogterm-photo-list v2\nalbum https://photos.app.goo.gl/abc\nfetched 1\n3000 4000 https://lh3.googleusercontent.com/pw/A\n";
         assert_eq!(PhotoList::from_text(v2), None);
     }
 

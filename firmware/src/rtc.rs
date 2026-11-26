@@ -2,10 +2,10 @@
 //! SHT4x room temperature/humidity sensor.
 
 use anyhow::Result;
-use esp_idf_svc::hal::i2c::{I2c, I2cConfig, I2cDriver};
-use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
-use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::hal::delay::FreeRtos;
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
+use esp_idf_svc::hal::i2c::{I2c, I2cConfig, I2cDriver};
+use esp_idf_svc::hal::units::Hertz;
 use frogterm_core::{pcf8563, sht4x};
 
 const ADDR: u8 = 0x51;
@@ -17,11 +17,7 @@ pub struct Rtc<'d> {
 }
 
 impl<'d> Rtc<'d> {
-    pub fn new(
-        i2c: impl I2c + 'd,
-        sda: impl InputPin + OutputPin + 'd,
-        scl: impl InputPin + OutputPin + 'd,
-    ) -> Result<Self> {
+    pub fn new(i2c: impl I2c + 'd, sda: impl InputPin + OutputPin + 'd, scl: impl InputPin + OutputPin + 'd) -> Result<Self> {
         let cfg = I2cConfig::new().baudrate(Hertz(100_000));
         Ok(Self { i2c: I2cDriver::new(i2c, sda, scl, &cfg)? })
     }

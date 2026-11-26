@@ -95,11 +95,7 @@ impl Stamp {
     /// counted in the value's own frame (UTC or wall clock).
     fn shifted(self, secs: i64) -> Stamp {
         let base = self.date.days_since_epoch() * 86_400 + i64::from(self.secs.unwrap_or(0)) + secs;
-        Stamp {
-            date: Date::from_days(base.div_euclid(86_400)),
-            secs: self.secs.map(|_| base.rem_euclid(86_400) as u32),
-            utc: self.utc,
-        }
+        Stamp { date: Date::from_days(base.div_euclid(86_400)), secs: self.secs.map(|_| base.rem_euclid(86_400) as u32), utc: self.utc }
     }
 
     fn frame_secs(self) -> i64 {
@@ -194,11 +190,8 @@ impl Rule {
             Freq::Weekly => {
                 let week_start = |x: i64| x - i64::from((Date::from_days(x).weekday() + 7 - self.wkst) % 7);
                 let weeks = (week_start(dd) - week_start(fd)) / 7;
-                let days: Vec<u8> = if self.by_day.is_empty() {
-                    vec![first.weekday()]
-                } else {
-                    self.by_day.iter().map(|&(_, w)| w).collect()
-                };
+                let days: Vec<u8> =
+                    if self.by_day.is_empty() { vec![first.weekday()] } else { self.by_day.iter().map(|&(_, w)| w).collect() };
                 weeks % self.interval == 0 && days.contains(&d.weekday())
             }
             Freq::Monthly => months % self.interval == 0 && self.day_in_month_ok(first, d),
@@ -228,7 +221,11 @@ impl Rule {
         }
         if !self.by_month_day.is_empty() {
             return self.by_month_day.iter().any(|&m| {
-                if m > 0 { d.day == m as u8 } else { i16::from(d.day) == i16::from(dim) + 1 + i16::from(m) }
+                if m > 0 {
+                    d.day == m as u8
+                } else {
+                    i16::from(d.day) == i16::from(dim) + 1 + i16::from(m)
+                }
             });
         }
         d.day == first.day
@@ -281,12 +278,8 @@ impl IcsScanner {
             self.logical_line(&l);
         }
         let overridden = self.overridden;
-        let mut events: Vec<DayEvent> = self
-            .found
-            .into_iter()
-            .filter(|f| f.is_override || !overridden.contains(&(f.uid.clone(), f.date)))
-            .map(|f| f.event)
-            .collect();
+        let mut events: Vec<DayEvent> =
+            self.found.into_iter().filter(|f| f.is_override || !overridden.contains(&(f.uid.clone(), f.date))).map(|f| f.event).collect();
         sort_events(&mut events);
         events
     }
@@ -368,9 +361,7 @@ impl IcsScanner {
                 continue;
             }
             if let Some(count) = rule.count {
-                let n = (start.date.days_since_epoch()..=frame_day)
-                    .filter(|&x| rule.matches(start.date, Date::from_days(x)))
-                    .count();
+                let n = (start.date.days_since_epoch()..=frame_day).filter(|&x| rule.matches(start.date, Date::from_days(x))).count();
                 if n > count as usize {
                     continue;
                 }
@@ -741,7 +732,8 @@ mod tests {
         assert_eq!(one(&local, date(2026, 12, 2)).len(), 1, "other weeks still happen");
         let utc = format!("{JUDO}\nEXDATE:20261125T110000Z");
         assert_eq!(one(&utc, DAY), vec![], "same instant written in UTC");
-        let all_day = "DTSTART;VALUE=DATE:20261104\nDTEND;VALUE=DATE:20261105\nRRULE:FREQ=WEEKLY\nEXDATE;VALUE=DATE:20261125\nUID:w\nSUMMARY:x";
+        let all_day =
+            "DTSTART;VALUE=DATE:20261104\nDTEND;VALUE=DATE:20261105\nRRULE:FREQ=WEEKLY\nEXDATE;VALUE=DATE:20261125\nUID:w\nSUMMARY:x";
         assert_eq!(one(all_day, DAY), vec![]);
         assert_eq!(one(all_day, date(2026, 11, 18)).len(), 1);
     }
@@ -769,5 +761,4 @@ mod tests {
         let cancelled_occurrence = "RECURRENCE-ID;TZID=Asia/Jerusalem:20261125T130000\nDTSTART;TZID=Asia/Jerusalem:20261125T130000\nDTEND;TZID=Asia/Jerusalem:20261125T140000\nUID:judo\nSUMMARY:13:00Дзюдо\nSTATUS:CANCELLED";
         assert_eq!(events_on(&ics(&[JUDO, cancelled_occurrence]), DAY), vec![]);
     }
-
 }

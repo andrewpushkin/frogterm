@@ -70,20 +70,9 @@ pub fn main(args: &[String]) -> Result<()> {
     let photos = net::fetch_album(&agent, &link, max_pages, |p| {
         bytes += p.bytes;
         let total = p.total.map(|t| format!(" (Google says album has {t})")).unwrap_or_default();
-        println!(
-            "      page {:>3}: +{:<3} photos, {:>4} KB, {:.1} s{total}",
-            p.page,
-            p.added,
-            p.bytes / 1024,
-            p.took.as_secs_f32()
-        );
+        println!("      page {:>3}: +{:<3} photos, {:>4} KB, {:.1} s{total}", p.page, p.added, p.bytes / 1024, p.took.as_secs_f32());
     })?;
-    println!(
-        "      album: {} photos, {:.1} MB downloaded, {:.1} s",
-        photos.len(),
-        bytes as f64 / 1e6,
-        t.elapsed().as_secs_f32()
-    );
+    println!("      album: {} photos, {:.1} MB downloaded, {:.1} s", photos.len(), bytes as f64 / 1e6, t.elapsed().as_secs_f32());
     if photos.is_empty() {
         bail!("the album has no photos");
     }
