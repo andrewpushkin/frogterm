@@ -177,8 +177,9 @@ impl Emulated {
     fn wake(&mut self, state: &mut State, wake: Wake) -> u64 {
         println!();
         let label = self.cfg.label().to_string();
+        let times = self.cfg.update_times();
         let rules = app::Config {
-            update_hour: self.cfg.update_hour,
+            update_times: &times,
             refresh_minutes: self.cfg.refresh_minutes,
             photo_batch: self.cfg.photo_batch,
             opacity: self.rules.0,

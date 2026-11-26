@@ -11,16 +11,37 @@ pub enum WakePlan {
     Sleep(u64),
 }
 
-/// Unix time of the next local `hour:00` that is more than 60 s after `now`.
-pub fn next_update(now: i64, hour: u8) -> i64 {
-    let (today, _) = tz::to_local(now);
-    let at = |d: Date| tz::from_local(d, u32::from(hour) * 3600);
-    let candidate = at(today);
-    if candidate > now + 60 {
-        candidate
-    } else {
-        at(Date::from_days(today.days_since_epoch() + 1))
+/// Local times of the daily screen updates (owner: 06:00, 13:30, 18:15).
+pub const DEFAULT_TIMES: &[(u8, u8)] = &[(6, 0), (13, 30), (18, 15)];
+
+/// `"13:30"` (or `"6:15"`) → `(13, 30)`.
+pub fn parse_time(s: &str) -> Option<(u8, u8)> {
+    let (h, m) = s.trim().split_once(':')?;
+    let ok = |p: &str, max: u8| (1..=2).contains(&p.len()).then(|| p.parse::<u8>().ok()).flatten().filter(|&v| v <= max);
+    if m.len() != 2 {
+        return None;
     }
+    Some((ok(h, 23)?, ok(m, 59)?))
+}
+
+/// `"06:00,13:30,18:15"` → the times; `None` if empty or one is bad.
+pub fn parse_times(s: &str) -> Option<Vec<(u8, u8)>> {
+    let times: Option<Vec<_>> = s.split(',').map(parse_time).collect();
+    times.filter(|t| !t.is_empty())
+}
+
+/// Unix time of the next of the local `times` that is more than 60 s after `now`.
+pub fn next_update(now: i64, times: &[(u8, u8)]) -> i64 {
+    let (today, _) = tz::to_local(now);
+    let times = if times.is_empty() { DEFAULT_TIMES } else { times };
+    (0..=1)
+        .flat_map(|days| {
+            let d = Date::from_days(today.days_since_epoch() + days);
+            times.iter().map(move |&(h, m)| tz::from_local(d, u32::from(h) * 3600 + u32::from(m) * 60))
+        })
+        .filter(|&t| t > now + 60)
+        .min()
+        .expect("tomorrow's times are always later")
 }
 
 /// Waking up to this much early still counts as on time.
@@ -49,15 +70,15 @@ pub struct Retry {
 }
 
 /// After the `attempt`-th failure in a row: retry in 30 min (≤ 3 times), else
-/// the next daily update; with an unknown time, try again in an hour.
-pub fn after_failure(now: Option<i64>, attempt: u8, hour: u8) -> Retry {
+/// the next scheduled update; with an unknown time, try again in an hour.
+pub fn after_failure(now: Option<i64>, attempt: u8, times: &[(u8, u8)]) -> Retry {
     let Some(now) = now else {
         return Retry { target: 0, secs: when_time_unknown() };
     };
     match retry_after_failure(attempt) {
         Some(secs) => Retry { target: now + secs as i64, secs },
         None => {
-            let target = next_update(now, hour);
+            let target = next_update(now, times);
             Retry { target, secs: (target - now) as u64 }
         }
     }
@@ -126,18 +147,44 @@ mod tests {
         tz::from_local(Date { year: y, month: m, day: d }, h * 3600 + min * 60 + s)
     }
 
+    const SIX: &[(u8, u8)] = &[(6, 0)];
+
     #[test]
     fn next_update_is_today_or_tomorrow_at_6_local() {
-        assert_eq!(next_update(local(2026, 11, 25, 5, 0, 0), 6), local(2026, 11, 25, 6, 0, 0));
-        assert_eq!(next_update(local(2026, 11, 25, 5, 59, 30), 6), local(2026, 11, 26, 6, 0, 0), "within 60 s");
-        assert_eq!(next_update(local(2026, 11, 25, 14, 0, 0), 6), local(2026, 11, 26, 6, 0, 0));
+        assert_eq!(next_update(local(2026, 11, 25, 5, 0, 0), SIX), local(2026, 11, 25, 6, 0, 0));
+        assert_eq!(next_update(local(2026, 11, 25, 5, 59, 30), SIX), local(2026, 11, 26, 6, 0, 0), "within 60 s");
+        assert_eq!(next_update(local(2026, 11, 25, 14, 0, 0), SIX), local(2026, 11, 26, 6, 0, 0));
+    }
+
+    #[test]
+    fn next_update_is_the_next_of_three_daily_times() {
+        let at = |h, m| local(2026, 11, 25, h, m, 0);
+        assert_eq!(next_update(at(5, 0), DEFAULT_TIMES), at(6, 0));
+        assert_eq!(next_update(at(6, 0), DEFAULT_TIMES), at(13, 30), "just updated at 06:00");
+        assert_eq!(next_update(at(13, 0), DEFAULT_TIMES), at(13, 30));
+        assert_eq!(next_update(at(13, 30), DEFAULT_TIMES), at(18, 15));
+        assert_eq!(next_update(at(18, 15), DEFAULT_TIMES), local(2026, 11, 26, 6, 0, 0));
+        assert_eq!(next_update(at(23, 0), &[(18, 15), (6, 0)]), local(2026, 11, 26, 6, 0, 0), "order does not matter");
+    }
+
+    #[test]
+    fn update_times_parse_from_text() {
+        assert_eq!(parse_time("06:00"), Some((6, 0)));
+        assert_eq!(parse_time("13:30"), Some((13, 30)));
+        assert_eq!(parse_time("6:15"), Some((6, 15)));
+        for bad in ["24:00", "12:60", "12", "ab:cd", "", "12:3"] {
+            assert_eq!(parse_time(bad), None, "{bad:?}");
+        }
+        assert_eq!(parse_times("06:00,13:30,18:15"), Some(DEFAULT_TIMES.to_vec()));
+        assert_eq!(parse_times("06:00,25:00"), None);
+        assert_eq!(parse_times(""), None, "at least one time");
     }
 
     #[test]
     fn next_update_across_dst() {
         let utc = |y: i32, m: u8, d: u8, h: i64| Date { year: y, month: m, day: d }.days_since_epoch() * 86_400 + h * 3600;
-        assert_eq!(next_update(local(2026, 3, 26, 12, 0, 0), 6), utc(2026, 3, 27, 3), "06:00 IDT");
-        assert_eq!(next_update(local(2026, 10, 24, 12, 0, 0), 6), utc(2026, 10, 25, 4), "06:00 IST");
+        assert_eq!(next_update(local(2026, 3, 26, 12, 0, 0), SIX), utc(2026, 3, 27, 3), "06:00 IDT");
+        assert_eq!(next_update(local(2026, 10, 24, 12, 0, 0), SIX), utc(2026, 10, 25, 4), "06:00 IST");
     }
 
     #[test]
@@ -164,7 +211,7 @@ mod tests {
     #[test]
     fn retry_wake_is_not_mistaken_for_an_early_wake() {
         let now = local(2026, 11, 25, 6, 0, 30);
-        let r = after_failure(Some(now), 1, 6);
+        let r = after_failure(Some(now), 1, SIX);
         assert_eq!(r.secs, 1800);
         assert_eq!(on_timer_wake(Some(now + r.secs as i64), r.target), WakePlan::Update);
         // even if the RC clock wakes the chip a bit early
@@ -174,14 +221,16 @@ mod tests {
     #[test]
     fn after_three_failures_wait_for_the_daily_update() {
         let now = local(2026, 11, 25, 7, 30, 0);
-        let r = after_failure(Some(now), 4, 6);
+        let r = after_failure(Some(now), 4, SIX);
         assert_eq!(r.target, local(2026, 11, 26, 6, 0, 0));
         assert_eq!(r.secs as i64, r.target - now);
+        let r = after_failure(Some(now), 4, DEFAULT_TIMES);
+        assert_eq!(r.target, local(2026, 11, 25, 13, 30, 0), "or the next of the daily updates");
     }
 
     #[test]
     fn failure_with_unknown_time_retries_hourly() {
-        let r = after_failure(None, 1, 6);
+        let r = after_failure(None, 1, SIX);
         assert_eq!(r.secs, 3600);
         assert_eq!(on_timer_wake(None, r.target), WakePlan::Update);
     }

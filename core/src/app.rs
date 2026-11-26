@@ -46,8 +46,8 @@ pub struct State {
 /// Settings the wake logic needs.
 #[derive(Debug, Clone)]
 pub struct Config<'a> {
-    /// Local hour of the daily update.
-    pub update_hour: u8,
+    /// Local times `(hour, minute)` of the daily screen updates.
+    pub update_times: &'a [(u8, u8)],
     /// Weather/calendar younger than this are reused without Wi-Fi.
     pub refresh_minutes: u32,
     /// Photo screens downloaded per batch.
@@ -139,12 +139,12 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
     if r.battery_mv.is_some_and(battery::too_low_to_update) {
         log::warn!("battery too low for a panel refresh");
         dev.beep(beep::ERROR);
-        return sleep_until_next(dev, state, r.now, cfg.update_hour);
+        return sleep_until_next(dev, state, r.now, cfg.update_times);
     }
 
     // if this update hangs or crashes, the watchdog's 30-minute sleep must
     // count as a retry, not as an early wake before the daily update
-    let provisional = schedule::after_failure(any_now, state.attempt.saturating_add(1), cfg.update_hour);
+    let provisional = schedule::after_failure(any_now, state.attempt.saturating_add(1), cfg.update_times);
     state.target = provisional.target;
     dev.save_state(state);
 
@@ -177,7 +177,7 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
                 dev.beep(beep::ERROR);
             }
         }
-        return sleep_until_next(dev, state, any_now, cfg.update_hour);
+        return sleep_until_next(dev, state, any_now, cfg.update_times);
     }
 
     // green button / timer: a stored photo not seen yet; once all were seen
@@ -202,13 +202,13 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
         Ok(now) => {
             dev.beep(beep::SUCCESS);
             state.attempt = 0;
-            sleep_until_next(dev, state, Some(now), cfg.update_hour)
+            sleep_until_next(dev, state, Some(now), cfg.update_times)
         }
         Err(e) => {
             log::error!("update failed: {e:#}");
             dev.beep(beep::ERROR);
             state.attempt = state.attempt.saturating_add(1);
-            let retry = schedule::after_failure(any_now, state.attempt, cfg.update_hour);
+            let retry = schedule::after_failure(any_now, state.attempt, cfg.update_times);
             if schedule::retry_after_failure(state.attempt).is_none() {
                 state.attempt = 0; // back to the daily schedule
             }
@@ -310,14 +310,14 @@ fn update(
     Ok(now)
 }
 
-/// Sleep until the next daily update (an hour if the time is unknown).
-fn sleep_until_next(dev: &mut impl Device, state: &mut State, now: Option<i64>, hour: u8) -> u64 {
+/// Sleep until the next scheduled update (an hour if the time is unknown).
+fn sleep_until_next(dev: &mut impl Device, state: &mut State, now: Option<i64>, times: &[(u8, u8)]) -> u64 {
     let Some(now) = now else {
         log::warn!("time unknown, retrying in an hour");
         dev.save_state(state);
         return schedule::when_time_unknown();
     };
-    state.target = schedule::next_update(now, hour);
+    state.target = schedule::next_update(now, times);
     dev.save_state(state);
     let (d, s) = tz::to_local(state.target);
     log::info!("sleeping until {} {:02}:{:02} local", d.label(), s / 3600, s % 3600 / 60);
@@ -475,7 +475,7 @@ mod tests {
     const T0: i64 = 1_795_593_600;
 
     fn cfg() -> Config<'static> {
-        Config { update_hour: 6, refresh_minutes: 480, photo_batch: 3, opacity: 50, place: "Home", panel_rest: true }
+        Config { update_times: &[(6, 0)], refresh_minutes: 480, photo_batch: 3, opacity: 50, place: "Home", panel_rest: true }
     }
 
     fn at(now: i64) -> Readings {
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(dev.shown, vec![Some(0)]);
         assert_eq!((st.stock_count, st.current, st.seen), (3, 0, 1));
         assert_eq!(dev.beeps, vec!["ok"], "no press chirp or ticks on power-on");
-        assert_eq!(st.target, schedule::next_update(T0, 6));
+        assert_eq!(st.target, schedule::next_update(T0, &[(6, 0)]));
         assert_eq!(secs as i64, st.target - T0);
         assert_eq!(dev.saved, Some(st));
     }

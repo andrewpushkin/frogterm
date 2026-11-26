@@ -10,7 +10,8 @@ pub struct Settings {
     pub opacity: u8,
     pub wifi_ssid: &'static str,
     pub wifi_password: &'static str,
-    pub update_hour: u8,
+    /// Local `(hour, minute)` of the daily screen updates.
+    pub update_times: Vec<(u8, u8)>,
     pub photo_batch: u8,
     pub refresh_minutes: u32,
     /// POSIX TZ string (validated at build time).
@@ -28,7 +29,8 @@ pub fn settings() -> Settings {
         opacity: env!("FT_OPACITY").parse().unwrap_or(50),
         wifi_ssid: env!("FT_WIFI_SSID"),
         wifi_password: env!("FT_WIFI_PASSWORD"),
-        update_hour: env!("FT_UPDATE_HOUR").parse().unwrap_or(6),
+        update_times: frogterm_core::schedule::parse_times(env!("FT_UPDATE_TIMES"))
+            .unwrap_or_else(|| frogterm_core::schedule::DEFAULT_TIMES.to_vec()),
         photo_batch: env!("FT_PHOTO_BATCH").parse().unwrap_or(10),
         refresh_minutes: env!("FT_REFRESH_MINUTES").parse().unwrap_or(480),
         timezone: env!("FT_TIMEZONE"),

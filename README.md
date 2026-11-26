@@ -11,7 +11,8 @@ Spectra 6 panel) that turns it into a family photo frame:
   48 hours are fetched, so offline updates show their own next 12 hours),
 - **room temperature** and **battery level**.
 
-It updates every day at 06:00 and whenever the green button is pressed, then
+It updates three times a day (06:00, 13:30 and 18:15; `update_times`) and
+whenever the green button is pressed, then
 deep-sleeps (≈14 µA). Everything is written in Rust, and everything builds in
 Docker.
 
@@ -98,7 +99,7 @@ Your 2.4 GHz network (the ESP32 has no 5 GHz). WPA2 or open.
 
 ### Other settings
 
-`overlay_opacity`, `update_hour`, `photo_batch`, `refresh_minutes` — see the
+`overlay_opacity`, `update_times`, `photo_batch`, `refresh_minutes` — see the
 comments in `config.example.toml`.
 
 ## Try it on the PC first
@@ -115,7 +116,7 @@ make tests        # all unit tests
 The emulator runs the firmware's own wake logic (`core/src/app.rs`): click
 **< Previous**, **Update** (the green button) and **Next >** (or press
 Left / Space / Right) and it does exactly what the device does — stored
-photos, batches, the panel's rest between refreshes, the 06:00 timer wake.
+photos, batches, the panel's rest between refreshes, the scheduled timer wakes.
 `out/` is its flash (stored screens, weather/calendar, state); delete it for
 a factory-fresh device. The window shows the LED (on while awake) and the
 last log line; the full log is in the terminal.
@@ -155,8 +156,8 @@ make flash FEATURES=bars          # test build: six colour bars only
 | three low beeps | update failed (retried in 30 min, up to 3 times) |
 
 - **Green button**: a stored photo not seen yet; once every stored photo has
-  been on the screen, a new batch is downloaded. The 06:00 update does the
-  same. Presses during an update chirp and are ignored. The panel rests
+  been on the screen, a new batch is downloaded. The scheduled updates do
+  the same. Presses during an update chirp and are ignored. The panel rests
   between refreshes (E Ink care); an earlier press is carried out
   automatically when it may.
 - **Side buttons**: previous / next stored photo, no Wi-Fi. Photos seen this

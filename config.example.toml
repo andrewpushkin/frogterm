@@ -52,8 +52,8 @@ calendars = [
 wifi_ssid = "your-wifi-name"
 wifi_password = "your-wifi-password"
 
-# Local hour of the daily update. Default 6.
-# update_hour = 6
+# Local times of the daily screen updates. Default 06:00, 13:30 and 18:15.
+# update_times = ["06:00", "13:30", "18:15"]
 
 # Photos downloaded per Wi-Fi batch and kept in flash (1..20). Default 10.
 # photo_batch = 10

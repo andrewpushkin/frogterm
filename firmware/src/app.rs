@@ -242,7 +242,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
     }
 
     let rules = app::Config {
-        update_hour: cfg.update_hour,
+        update_times: &cfg.update_times,
         refresh_minutes: cfg.refresh_minutes,
         photo_batch: cfg.photo_batch,
         opacity: cfg.opacity,

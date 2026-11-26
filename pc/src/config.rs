@@ -31,9 +31,10 @@ pub struct Config {
     pub wifi_ssid: Option<String>,
     #[serde(default)]
     pub wifi_password: Option<String>,
-    /// Firmware only: local hour of the daily update (default 6).
-    #[serde(default = "six")]
-    pub update_hour: u8,
+    /// Local times of the daily screen updates, `"HH:MM"`
+    /// (default 06:00, 13:30, 18:15).
+    #[serde(default = "default_times")]
+    pub update_times: Vec<String>,
     /// Firmware only: photos downloaded per Wi-Fi batch (1..=20, default 10).
     #[serde(default = "ten")]
     pub photo_batch: u8,
@@ -58,8 +59,8 @@ fn eight_hours() -> u32 {
     480
 }
 
-fn six() -> u8 {
-    6
+fn default_times() -> Vec<String> {
+    frogterm_core::schedule::DEFAULT_TIMES.iter().map(|(h, m)| format!("{h:02}:{m:02}")).collect()
 }
 
 fn half() -> u8 {
@@ -90,8 +91,11 @@ impl Config {
         if !(1..=1080).contains(&c.refresh_minutes) {
             bail!("refresh_minutes must be 1..=1080 (at most 18 h between weather fetches)");
         }
-        if c.update_hour > 23 {
-            bail!("update_hour must be 0..=23, got {}", c.update_hour);
+        if c.update_times.is_empty() {
+            bail!("update_times needs at least one \"HH:MM\"");
+        }
+        if let Some(bad) = c.update_times.iter().find(|t| frogterm_core::schedule::parse_time(t).is_none()) {
+            bail!("update_times must be local \"HH:MM\" times like \"13:30\", got {bad:?}");
         }
         if c.overlay_opacity > 100 {
             bail!("overlay_opacity is a percentage 0..=100, got {}", c.overlay_opacity);
@@ -117,6 +121,11 @@ impl Config {
     /// The configured time zone (validated in `parse`).
     pub fn zone(&self) -> frogterm_core::tz::Zone {
         frogterm_core::tz::Zone::parse(&self.timezone).expect("validated when parsed")
+    }
+
+    /// The daily update times (validated in `parse`).
+    pub fn update_times(&self) -> Vec<(u8, u8)> {
+        self.update_times.iter().filter_map(|t| frogterm_core::schedule::parse_time(t)).collect()
     }
 
     /// Fixed coordinates, if the config pins them.
@@ -171,19 +180,21 @@ mod tests {
     #[test]
     fn firmware_settings_parse() {
         let c = Config::parse(
-            "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\nwifi_ssid = \"home\"\nwifi_password = \"pw\"\nupdate_hour = 7\n",
+            "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\nwifi_ssid = \"home\"\nwifi_password = \"pw\"\nupdate_times = [\"07:00\", \"19:45\"]\n",
         )
         .unwrap();
         assert_eq!(c.wifi_ssid.as_deref(), Some("home"));
         assert_eq!(c.wifi_password.as_deref(), Some("pw"));
-        assert_eq!(c.update_hour, 7);
+        assert_eq!(c.update_times(), [(7, 0), (19, 45)]);
     }
 
     #[test]
-    fn update_hour_defaults_to_6_and_is_validated() {
+    fn update_times_default_to_three_a_day_and_are_validated() {
         let base = "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\n";
-        assert_eq!(Config::parse(base).unwrap().update_hour, 6);
-        assert!(Config::parse(&format!("{base}update_hour = 24\n")).is_err());
+        assert_eq!(Config::parse(base).unwrap().update_times(), [(6, 0), (13, 30), (18, 15)]);
+        assert!(Config::parse(&format!("{base}update_times = [\"24:00\"]\n")).is_err());
+        assert!(Config::parse(&format!("{base}update_times = [\"6\"]\n")).is_err());
+        assert!(Config::parse(&format!("{base}update_times = []\n")).is_err());
     }
 
     #[test]
@@ -219,7 +230,7 @@ mod tests {
     #[test]
     fn firmware_only_keys_are_ignored() {
         let c = Config::parse(
-            "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\nwifi_ssid = \"home\"\nupdate_hour = 6\n",
+            "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\nwifi_ssid = \"home\"\nwifi_password = \"pw\"\n",
         );
         assert!(c.is_ok());
     }

@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
         ("FT_OPACITY", c.overlay_opacity.to_string()),
         ("FT_WIFI_SSID", ssid),
         ("FT_WIFI_PASSWORD", password),
-        ("FT_UPDATE_HOUR", c.update_hour.to_string()),
+        ("FT_UPDATE_TIMES", c.update_times.join(",")),
         ("FT_PHOTO_BATCH", c.photo_batch.to_string()),
         ("FT_REFRESH_MINUTES", c.refresh_minutes.to_string()),
         ("FT_TIMEZONE", c.timezone.clone()),
