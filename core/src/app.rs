@@ -174,13 +174,16 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
         return sleep_until_next(dev, state, any_now, cfg.update_times);
     }
 
-    // green button / timer: a stored photo not seen yet; once all were seen
-    // (also by browsing), a new batch. What this wake has to fetch: nothing,
+    // green button: always a full sync (new batch, weather, calendar).
+    // Timer: a stored photo not seen yet; once all were seen (also by
+    // browsing), a new batch. What this wake has to fetch: nothing,
     // weather+calendar, or also photos
     let unseen_slot = stock::next_unseen(state.seen, state.stock_count, state.current);
     let next_photo = unseen_slot.and_then(|slot| dev.load_screen(slot).map(|fb| (slot, fb)));
     let photos_left = if next_photo.is_some() { stock::unseen(state.seen, state.stock_count) } else { 0 };
     let plan = match r.now {
+        // the green button always syncs: new photos, weather and calendar
+        _ if press == Some(Press::Update) => UpdatePlan::RefreshAll,
         Some(now) => schedule::plan_update(
             now,
             stored_info.as_ref().map(|i| (i.fetched_at, i.date)),
@@ -509,13 +512,24 @@ mod tests {
     }
 
     #[test]
-    fn green_button_shows_the_next_unseen_photo_without_wifi() {
+    fn green_button_always_syncs_photos_weather_and_calendar() {
         let (mut dev, mut st) = stocked(3);
         st.seen = stock::mark(0, 0);
+        dev.next_batch = 10;
         run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
+        assert_eq!(dev.online_calls, vec![3], "fresh info and unseen photos, still a full sync");
+        assert_eq!(dev.shown, vec![Some(10)], "the first photo of the new batch");
+        assert_eq!(dev.info.as_ref().map(|i| i.fetched_at), Some(T0));
+        assert_eq!(dev.beeps, vec!["press", "ok"], "the update itself is silent");
+    }
+
+    #[test]
+    fn scheduled_update_with_fresh_info_needs_no_wifi() {
+        let (mut dev, mut st) = stocked(3);
+        st.seen = stock::mark(0, 0);
+        run(&mut dev, &mut st, &cfg(), Wake::Timer, at(T0));
         assert!(dev.online_calls.is_empty(), "fresh info and unseen photos: offline");
         assert_eq!(dev.shown, vec![Some(1)]);
-        assert_eq!(dev.beeps, vec!["press", "ok"], "the update itself is silent");
     }
 
     #[test]
@@ -534,7 +548,7 @@ mod tests {
     fn old_info_is_fetched_again_but_the_photo_is_a_stored_one() {
         let (mut dev, mut st) = stocked(3);
         let later = T0 + 9 * 3600;
-        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(later));
+        run(&mut dev, &mut st, &cfg(), Wake::Timer, at(later));
         assert_eq!(dev.online_calls, vec![0], "weather + calendar only");
         assert_eq!(dev.shown, vec![Some(1)]);
         assert_eq!(dev.info.as_ref().map(|i| i.fetched_at), Some(later));
