@@ -237,9 +237,25 @@ fn taken_date(item: &Value) -> Option<Date> {
     Some(Date::from_unix(ms.div_euclid(1000), (offset_ms / 1000) as i32))
 }
 
+/// 64-bit fingerprint of a photo URL: skips photos repeated across album
+/// pages without keeping a copy of every URL.
+pub fn url_key(url: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut h);
+    h.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_key_tells_urls_apart() {
+        let a = "https://lh3.googleusercontent.com/pw/A";
+        assert_eq!(url_key(a), url_key(&a.to_string()));
+        assert_ne!(url_key(a), url_key("https://lh3.googleusercontent.com/pw/B"));
+    }
 
     fn item(n: u32, w: u32, h: u32) -> Value {
         serde_json::json!([

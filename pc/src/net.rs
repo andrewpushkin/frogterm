@@ -76,7 +76,7 @@ pub fn fetch_album(
     let mut add = |page: album::AlbumPage, n: usize, bytes: usize, took: Duration| {
         let before = photos.len();
         for p in page.photos {
-            if seen.insert(p.url.clone()) {
+            if seen.insert(album::url_key(&p.url)) {
                 photos.push(p);
             }
         }

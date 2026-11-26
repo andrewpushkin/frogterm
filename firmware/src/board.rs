@@ -61,27 +61,30 @@ fn led_mode() -> Led {
     }
 }
 
-fn led_level(lit: bool) {
-    unsafe {
-        sys::gpio_set_level(LED_GPIO, u32::from(!lit)); // active low
-    }
-}
-
-/// Releases the LED pin from its deep-sleep hold, drives it as an output and
-/// starts the blinker thread.
-fn start_led() {
+/// The only raw access to the LED pin: releases its deep-sleep hold, drives
+/// it (active low) and, with `hold`, latches that level for deep sleep.
+fn drive_led(lit: bool, hold: bool) {
+    // SAFETY: plain register writes on GPIO6, which nothing else uses
     unsafe {
         sys::gpio_hold_dis(LED_GPIO);
         sys::gpio_set_direction(LED_GPIO, sys::gpio_mode_t_GPIO_MODE_OUTPUT);
+        sys::gpio_set_level(LED_GPIO, u32::from(!lit));
+        if hold {
+            sys::gpio_hold_en(LED_GPIO);
+        }
     }
-    led_level(led_mode() != Led::Off);
+}
+
+/// Takes the LED over from its deep-sleep hold and starts the blinker thread.
+fn start_led() {
+    drive_led(led_mode() != Led::Off, false);
     let spawned = std::thread::Builder::new().name("led".into()).stack_size(2048).spawn(|| {
         let mut lit = false;
         loop {
             std::thread::sleep(Duration::from_millis(BLINK_MS));
             if led_mode() == Led::Blink {
                 lit = !lit;
-                led_level(lit);
+                drive_led(lit, false);
             }
         }
     });
@@ -95,21 +98,14 @@ fn start_led() {
 pub fn set_led(led: Led) {
     LED_MODE.store(led as u8, Ordering::Relaxed);
     if led != Led::Blink {
-        led_level(led == Led::On);
+        drive_led(led == Led::On, false);
     }
 }
 
 /// Before deep sleep: latch the LED (on stays on, anything else off) so it
 /// keeps its state while the chip sleeps.
 pub fn hold_led_for_sleep() {
-    unsafe {
-        sys::gpio_hold_dis(LED_GPIO);
-        sys::gpio_set_direction(LED_GPIO, sys::gpio_mode_t_GPIO_MODE_OUTPUT);
-    }
-    led_level(led_mode() == Led::On);
-    unsafe {
-        sys::gpio_hold_en(LED_GPIO);
-    }
+    drive_led(led_mode() == Led::On, true);
 }
 
 /// Plays `tones` without needing the `Board` (e.g. from the button thread).

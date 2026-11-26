@@ -61,13 +61,13 @@ pub fn visual_runs(text: &str) -> Vec<Run> {
             .collect()
     };
     let mut out = Vec::with_capacity(segs.len());
-    let order: Box<dyn Iterator<Item = &(Class, String)>> =
-        if rtl { Box::new(segs.iter().rev()) } else { Box::new(segs.iter()) };
+    let order: Box<dyn Iterator<Item = (Class, String)>> =
+        if rtl { Box::new(segs.into_iter().rev()) } else { Box::new(segs.into_iter()) };
     for (class, s) in order {
         let (text, hebrew) = match class {
-            Class::Hebrew => (reversed(s, true), true),
-            Class::Neutral if rtl => (reversed(s, true), false),
-            _ => (s.clone(), false),
+            Class::Hebrew => (reversed(&s, true), true),
+            Class::Neutral if rtl => (reversed(&s, true), false),
+            _ => (s, false),
         };
         out.push(Run { text, hebrew });
     }

@@ -441,27 +441,27 @@ pub fn sort_events(events: &mut [DayEvent]) {
 }
 
 /// Events still worth showing at local time `now`: all-day ones and those not yet over.
-pub fn remaining(events: Vec<DayEvent>, now: (u8, u8)) -> Vec<DayEvent> {
-    events.into_iter().filter(|e| e.start.is_none() || e.end.is_none_or(|end| end > now)).collect()
+pub fn remaining(events: &[DayEvent], now: (u8, u8)) -> Vec<&DayEvent> {
+    events.iter().filter(|e| e.start.is_none() || e.end.is_none_or(|end| end > now)).collect()
 }
 
 /// What the events box shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Agenda {
+pub struct Agenda<'a> {
     /// `None` = calendar unavailable.
-    pub events: Option<Vec<DayEvent>>,
+    pub events: Option<Vec<&'a DayEvent>>,
     /// The events are tomorrow's (nothing is left today).
     pub tomorrow: bool,
 }
 
 /// Today's events not yet over; if none are left, tomorrow's.
-pub fn agenda(today: Option<Vec<DayEvent>>, tomorrow: Option<Vec<DayEvent>>, now: (u8, u8)) -> Agenda {
+pub fn agenda<'a>(today: Option<&'a [DayEvent]>, tomorrow: Option<&'a [DayEvent]>, now: (u8, u8)) -> Agenda<'a> {
     let Some(today) = today else {
         return Agenda { events: None, tomorrow: false };
     };
     let left = remaining(today, now);
     match tomorrow {
-        Some(t) if left.is_empty() && !t.is_empty() => Agenda { events: Some(t), tomorrow: true },
+        Some(t) if left.is_empty() && !t.is_empty() => Agenda { events: Some(t.iter().collect()), tomorrow: true },
         _ => Agenda { events: Some(left), tomorrow: false },
     }
 }
@@ -609,7 +609,7 @@ mod tests {
             ev(Some((17, 0)), Some((18, 0)), "later"),
             ev(Some((22, 0)), None, "past midnight"),
         ];
-        let titles: Vec<String> = remaining(evs, (13, 0)).into_iter().map(|e| e.title).collect();
+        let titles: Vec<&str> = remaining(&evs, (13, 0)).into_iter().map(|e| e.title.as_str()).collect();
         assert_eq!(titles, ["all day", "running", "later", "past midnight"]);
     }
 
@@ -617,7 +617,7 @@ mod tests {
     fn agenda_shows_today_while_events_are_left() {
         let today = vec![ev(Some((8, 0)), Some((9, 0)), "over"), ev(Some((17, 0)), Some((18, 0)), "later")];
         let tomorrow = vec![ev(Some((10, 0)), Some((11, 0)), "tomorrow")];
-        let a = agenda(Some(today), Some(tomorrow), (12, 0));
+        let a = agenda(Some(&today), Some(&tomorrow), (12, 0));
         assert!(!a.tomorrow);
         assert_eq!(a.events.unwrap().iter().map(|e| e.title.as_str()).collect::<Vec<_>>(), ["later"]);
     }
@@ -626,16 +626,17 @@ mod tests {
     fn agenda_shows_tomorrow_when_today_is_done() {
         let today = vec![ev(Some((8, 0)), Some((9, 0)), "over")];
         let tomorrow = vec![ev(Some((10, 0)), Some((11, 0)), "Дзюдо")];
-        let a = agenda(Some(today), Some(tomorrow.clone()), (20, 0));
-        assert_eq!(a, Agenda { events: Some(tomorrow), tomorrow: true });
-        let a = agenda(Some(vec![]), Some(vec![ev(None, None, "ДР")]), (7, 0));
+        let a = agenda(Some(&today), Some(&tomorrow), (20, 0));
+        assert_eq!(a, Agenda { events: Some(tomorrow.iter().collect()), tomorrow: true });
+        let birthday = [ev(None, None, "ДР")];
+        let a = agenda(Some(&[]), Some(&birthday), (7, 0));
         assert!(a.tomorrow, "empty today");
     }
 
     #[test]
     fn agenda_with_nothing_today_or_tomorrow_or_no_calendar() {
-        assert_eq!(agenda(Some(vec![]), Some(vec![]), (9, 0)), Agenda { events: Some(vec![]), tomorrow: false });
-        assert_eq!(agenda(Some(vec![]), None, (9, 0)), Agenda { events: Some(vec![]), tomorrow: false });
+        assert_eq!(agenda(Some(&[]), Some(&[]), (9, 0)), Agenda { events: Some(vec![]), tomorrow: false });
+        assert_eq!(agenda(Some(&[]), None, (9, 0)), Agenda { events: Some(vec![]), tomorrow: false });
         assert_eq!(agenda(None, None, (9, 0)), Agenda { events: None, tomorrow: false });
     }
 

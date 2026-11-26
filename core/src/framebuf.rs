@@ -97,11 +97,12 @@ impl FrameBuffer {
         fb
     }
 
-    /// Inverse of `as_bytes`; `None` for a wrong length or an invalid ink code.
-    pub fn from_bytes(bytes: &[u8]) -> Option<FrameBuffer> {
+    /// Inverse of `as_bytes` (takes the buffer over, no copy); `None` for a
+    /// wrong length or an invalid ink code.
+    pub fn from_vec(bytes: Vec<u8>) -> Option<FrameBuffer> {
         let valid = |n: u8| Ink::from_code(n).is_some();
         (bytes.len() == (WIDTH * HEIGHT / 2) as usize && bytes.iter().all(|&b| valid(b >> 4) && valid(b & 0x0F)))
-            .then(|| FrameBuffer { data: bytes.to_vec() })
+            .then_some(FrameBuffer { data: bytes })
     }
 
     /// Raw panel data, 4 bpp, 192 000 bytes.
@@ -204,12 +205,12 @@ mod tests {
     #[test]
     fn framebuffer_bytes_round_trip() {
         let fb = FrameBuffer::colour_bars();
-        let back = FrameBuffer::from_bytes(fb.as_bytes()).expect("valid");
+        let back = FrameBuffer::from_vec(fb.as_bytes().to_vec()).expect("valid");
         assert_eq!(back.as_bytes(), fb.as_bytes());
-        assert!(FrameBuffer::from_bytes(&fb.as_bytes()[1..]).is_none(), "wrong length");
+        assert!(FrameBuffer::from_vec(fb.as_bytes()[1..].to_vec()).is_none(), "wrong length");
         let mut bad = fb.as_bytes().to_vec();
         bad[10] = 0x41; // nibble 4 is not an ink
-        assert!(FrameBuffer::from_bytes(&bad).is_none());
+        assert!(FrameBuffer::from_vec(bad).is_none());
     }
 
     #[test]

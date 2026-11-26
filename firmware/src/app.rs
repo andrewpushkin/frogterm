@@ -112,8 +112,8 @@ impl Device for Reterminal<'_> {
         unix_now()
     }
 
-    fn show(&mut self, fb: &FrameBuffer) -> Result<()> {
-        self.epd.show(fb)
+    fn show(&mut self, fb: FrameBuffer) -> Result<()> {
+        self.epd.show(&fb)
     }
 
     fn load_screen(&mut self, slot: u8) -> Option<FrameBuffer> {
@@ -307,13 +307,14 @@ fn online(cfg: &Settings, net: &mut Net, now: i64, batch: u8, stored_list: Optio
 fn photo_list(cfg: &Settings, net: &mut Net, store: &mut Store, now: i64, old: Option<PhotoList>) -> Result<PhotoList> {
     if let Some(l) = old.as_ref().filter(|l| l.is_fresh_for(cfg.album_url, now as u64)) {
         log::info!("photo list: {} photos, {:.1} days old", l.photos.len(), l.age_days(now as u64));
-        return Ok(l.clone());
+        return old.ok_or_else(|| anyhow!("no photo list"));
     }
     let (fetched, complete) = read_album(net, cfg.album_url);
     log::info!("album read: {} photos, complete: {complete}", fetched.len());
-    let list = after_refresh(old.clone(), fetched, complete, cfg.album_url, now as u64)
-        .ok_or_else(|| anyhow!("no photo list"))?;
-    if old.as_ref() != Some(&list) {
+    // a failed read keeps the old list as it is in flash: nothing to save
+    let keeps_old = !(complete && !fetched.is_empty()) && old.is_some();
+    let list = after_refresh(old, fetched, complete, cfg.album_url, now as u64).ok_or_else(|| anyhow!("no photo list"))?;
+    if !keeps_old {
         if let Err(e) = store.save_list(&list) {
             log::warn!("could not save the photo list: {e:#}");
         }
@@ -327,7 +328,7 @@ fn read_album(net: &mut Net, share_link: &str) -> (Vec<Photo>, bool) {
     let mut seen = std::collections::HashSet::new();
     let mut add = |page: album::AlbumPage| {
         for p in page.photos {
-            if seen.insert(p.url.clone()) {
+            if seen.insert(album::url_key(&p.url)) {
                 photos.push(p);
             }
         }
@@ -379,9 +380,11 @@ fn read_album(net: &mut Net, share_link: &str) -> (Vec<Photo>, bool) {
 /// Up to `ATTEMPTS` tries of: random photo (+ fresh tall partner), each slot
 /// downloaded already sized, veiled under the boxes and dithered into place.
 fn random_screen(list: &mut PhotoList, store: &mut Store, opacity: u8, now: i64) -> Result<FrameBuffer> {
-    let mut seed = (now as u64) ^ u64::from(unsafe { esp_idf_svc::sys::esp_random() });
+    // std seeds RandomState from the hardware RNG (esp_fill_random)
+    let entropy = std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), now);
+    let mut seed = (now as u64) ^ entropy | 1;
     let mut rand = move |n: usize| {
-        // xorshift, seeded from the hardware RNG
+        // xorshift
         seed ^= seed << 13;
         seed ^= seed >> 7;
         seed ^= seed << 17;

@@ -229,16 +229,16 @@ impl Device for Emulated {
         Some(SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64)
     }
 
-    fn show(&mut self, fb: &FrameBuffer) -> Result<()> {
+    fn show(&mut self, fb: FrameBuffer) -> Result<()> {
         let png = self.path("screen.png");
-        to_rgb_image(fb).save(&png).with_context(|| format!("save {}", png.display()))?;
+        to_rgb_image(&fb).save(&png).with_context(|| format!("save {}", png.display()))?;
         log::info!("panel refreshed ({})", png.display());
-        self.ui.show(fb.clone());
+        self.ui.show(fb);
         Ok(())
     }
 
     fn load_screen(&mut self, slot: u8) -> Option<FrameBuffer> {
-        FrameBuffer::from_bytes(&fs::read(self.path(&format!("screens/{slot}.bin"))).ok()?)
+        FrameBuffer::from_vec(fs::read(self.path(&format!("screens/{slot}.bin"))).ok()?)
     }
 
     fn save_screen(&mut self, slot: u8, fb: &FrameBuffer) -> Result<()> {

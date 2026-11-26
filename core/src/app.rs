@@ -96,8 +96,8 @@ pub trait Device {
     fn led(&mut self, led: Led);
     /// System clock, if it was ever set (fallback for a lost RTC).
     fn clock(&self) -> Option<i64>;
-    /// Refreshes the panel.
-    fn show(&mut self, fb: &FrameBuffer) -> Result<()>;
+    /// Refreshes the panel (takes the screen over: no copy needed to keep it).
+    fn show(&mut self, fb: FrameBuffer) -> Result<()>;
     fn load_screen(&mut self, slot: u8) -> Option<FrameBuffer>;
     fn save_screen(&mut self, slot: u8, fb: &FrameBuffer) -> Result<()>;
     fn load_info(&mut self) -> Option<Info>;
@@ -216,9 +216,8 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
     // browsing), a new batch. What this wake has to fetch: nothing,
     // weather+calendar, or also photos
     let unseen_slot = stock::next_unseen(state.seen, state.stock_count, state.current);
-    let next_photo = unseen_slot.and_then(|slot| dev.load_screen(slot).map(|fb| (slot, fb)));
-    let photos_left = if next_photo.is_some() { stock::unseen(state.seen, state.stock_count) } else { 0 };
-    let plan = match r.now {
+    let photos_left = if unseen_slot.is_some() { stock::unseen(state.seen, state.stock_count) } else { 0 };
+    let mut plan = match r.now {
         // the green button always syncs: new photos, weather and calendar
         _ if press == Some(Press::Update) => UpdatePlan::RefreshAll,
         Some(now) => schedule::plan_update(
@@ -230,6 +229,15 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
         None if photos_left == 0 => UpdatePlan::RefreshAll,
         None => UpdatePlan::RefreshInfo,
     };
+    // the stored photo (192 KB from flash) only when it will be shown;
+    // unreadable means a new batch
+    let next_photo = match (plan, unseen_slot) {
+        (UpdatePlan::RefreshAll, _) | (_, None) => None,
+        (_, Some(slot)) => dev.load_screen(slot).map(|fb| (slot, fb)),
+    };
+    if next_photo.is_none() {
+        plan = UpdatePlan::RefreshAll;
+    }
     log::info!("plan {plan:?}: {photos_left} of {} stored photos not seen yet", state.stock_count);
 
     match update(dev, state, cfg, plan, r, stored_info, next_photo) {
@@ -281,7 +289,7 @@ fn browse(
     log::info!("{dir:?}: stored photo {} of {}", slot + 1, state.stock_count);
     let info = stored_info.unwrap_or(Info { fetched_at: 0, date: tz::to_local(now).0, forecast: None, events: None, tomorrow: None });
     let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c, (slot + 1, state.stock_count));
-    dev.show(&fb)?;
+    dev.show(fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
     state.last_refresh = Some(now);
@@ -307,7 +315,7 @@ fn update(
         UpdatePlan::RefreshInfo | UpdatePlan::RefreshAll => {
             let all = plan == UpdatePlan::RefreshAll;
             let o = dev.go_online(r.now, if all { cfg.photo_batch } else { 0 })?;
-            let info = fresh_info(o.now, o.forecast, o.events, stored_info.as_ref());
+            let info = fresh_info(o.now, o.forecast, o.events, stored_info);
             dev.save_info(&info);
             (o.now, info, all.then_some(o.batch))
         }
@@ -340,7 +348,7 @@ fn update(
     log::info!("showing stored photo {} of {}", slot + 1, state.stock_count);
 
     let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c, (slot + 1, state.stock_count));
-    dev.show(&fb)?;
+    dev.show(fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
     state.last_refresh = Some(now);
@@ -367,20 +375,25 @@ pub fn fresh_info(
     now: i64,
     forecast: Option<Forecast>,
     events: Option<(Vec<DayEvent>, Vec<DayEvent>)>,
-    stored: Option<&Info>,
+    stored: Option<Info>,
 ) -> Info {
     let today = tz::to_local(now).0;
+    let (stored_forecast, stored_events) = match stored {
+        Some(i) => {
+            let days = today.days_since_epoch() - i.date.days_since_epoch();
+            (i.forecast, match days {
+                0 => (i.events, i.tomorrow),
+                1 => (i.tomorrow, None),
+                _ => (None, None),
+            })
+        }
+        None => (None, (None, None)),
+    };
     let (events, tomorrow) = match events {
         Some((a, b)) => (Some(a), Some(b)),
-        None => stored.map_or((None, None), |i| i.events_for(today)),
+        None => stored_events,
     };
-    Info {
-        fetched_at: now,
-        date: today,
-        forecast: forecast.or_else(|| stored.and_then(|i| i.forecast.clone())),
-        events,
-        tomorrow,
-    }
+    Info { fetched_at: now, date: today, forecast: forecast.or(stored_forecast), events, tomorrow }
 }
 
 /// Puts one downloaded photo (`rgb`, sized to `area`) into a screen: lightened
@@ -423,8 +436,7 @@ pub fn compose(
     // only what is still ahead: today's events not yet over, else tomorrow's
     let (events, tomorrow) = info.events_for(today);
     let agenda = calendar::agenda(events, tomorrow, now_hm);
-    let window = info.forecast.as_ref().and_then(|f| f.window(now));
-    draw_weather_box(&mut fb, window.as_deref(), backdrop);
+    draw_weather_box(&mut fb, info.forecast.as_ref().and_then(|f| f.window(now)), backdrop);
     draw_events_box(
         &mut fb,
         &EventsInfo {
@@ -491,8 +503,8 @@ mod tests {
         fn clock(&self) -> Option<i64> {
             None
         }
-        fn show(&mut self, fb: &FrameBuffer) -> Result<()> {
-            self.shown.push(marker(fb));
+        fn show(&mut self, fb: FrameBuffer) -> Result<()> {
+            self.shown.push(marker(&fb));
             Ok(())
         }
         fn load_screen(&mut self, slot: u8) -> Option<FrameBuffer> {
@@ -743,12 +755,12 @@ mod tests {
     fn failed_fetches_keep_the_stored_weather_and_same_day_events() {
         let ev = vec![DayEvent { start: Some((9, 0)), end: None, title: "Swim".into() }];
         let stored = fresh_info(T0 - 3600, None, Some((ev.clone(), vec![])), None);
-        let i = fresh_info(T0, None, None, Some(&stored));
+        let i = fresh_info(T0, None, None, Some(stored.clone()));
         assert_eq!((i.fetched_at, i.events), (T0, Some(ev)));
-        let next_day = fresh_info(T0 + 86_400, None, None, Some(&stored));
+        let next_day = fresh_info(T0 + 86_400, None, None, Some(stored.clone()));
         assert_eq!(next_day.events, Some(vec![]), "yesterday's events are not today's: its tomorrow is");
         assert_eq!(next_day.tomorrow, None);
-        let later = fresh_info(T0 + 2 * 86_400, None, None, Some(&stored));
+        let later = fresh_info(T0 + 2 * 86_400, None, None, Some(stored));
         assert_eq!(later.events, None, "nothing known about this day");
     }
 }

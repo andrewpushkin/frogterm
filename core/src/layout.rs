@@ -55,7 +55,7 @@ pub struct EventsInfo<'a> {
     /// Battery charge (small battery icon); red below 20 %.
     pub battery_pct: Option<u8>,
     /// `None` = calendar could not be fetched; empty = nothing (left) today.
-    pub events: Option<&'a [DayEvent]>,
+    pub events: Option<&'a [&'a DayEvent]>,
     /// `events` are tomorrow's: the header says "Tomorrow" instead of the date.
     pub tomorrow: bool,
     /// Sunrise and sunset (local), shown left of `status`.
@@ -182,7 +182,7 @@ impl Pen {
 }
 
 /// `None` = weather could not be fetched.
-pub fn draw_weather_box(fb: &mut FrameBuffer, forecast: Option<&[HourSlot]>, backdrop: Backdrop) {
+pub fn draw_weather_box<'s>(fb: &mut FrameBuffer, forecast: Option<impl Iterator<Item = &'s HourSlot>>, backdrop: Backdrop) {
     let pen = Pen::new(backdrop);
     let r = weather_rect();
     let o = r.top_left;
@@ -193,7 +193,7 @@ pub fn draw_weather_box(fb: &mut FrameBuffer, forecast: Option<&[HourSlot]>, bac
         return;
     };
     let left = (BOX_W as i32 - crate::weather::SLOTS as i32 * COL_W) / 2;
-    for (i, s) in slots.iter().take(crate::weather::SLOTS).enumerate() {
+    for (i, s) in slots.take(crate::weather::SLOTS).enumerate() {
         let cx = o.x + left + COL_W * i as i32 + COL_W / 2;
         let at = |y: i32| Point::new(cx, o.y + y);
         let c = HorizontalAlignment::Center;
@@ -548,13 +548,18 @@ mod tests {
 
     fn weather(forecast: Option<&[HourSlot]>) -> FrameBuffer {
         let mut fb = FrameBuffer::new(Ink::Green);
-        draw_weather_box(&mut fb, forecast, Backdrop::Solid);
+        draw_weather_box(&mut fb, forecast.map(|s| s.iter()), Backdrop::Solid);
         fb
+    }
+
+    fn refs(ev: &[DayEvent]) -> Vec<&DayEvent> {
+        ev.iter().collect()
     }
 
     fn agenda(ev: Option<&[DayEvent]>) -> FrameBuffer {
         let mut fb = FrameBuffer::new(Ink::Green);
-        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c: None, battery_pct: None, events: ev, tomorrow: false, sun: None }, Backdrop::Solid);
+        let ev = ev.map(refs);
+        draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c: None, battery_pct: None, events: ev.as_deref(), tomorrow: false, sun: None }, Backdrop::Solid);
         fb
     }
 
@@ -718,7 +723,8 @@ mod tests {
         let s = slots(14.0);
         let ev = events(3);
         let mut fb = FrameBuffer::new(Ink::Green);
-        draw_weather_box(&mut fb, Some(&s), Backdrop::Clear);
+        draw_weather_box(&mut fb, Some(s.iter()), Backdrop::Clear);
+        let ev = refs(&ev);
         draw_events_box(&mut fb, &EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow: false, sun: None }, Backdrop::Clear);
         for r in [weather_rect(), events_rect()] {
             untouched_outside_both(&fb);
@@ -769,6 +775,7 @@ mod tests {
     #[test]
     fn tomorrows_events_say_tomorrow_in_blue() {
         let ev = events(2);
+        let ev = refs(&ev);
         let draw = |tomorrow| {
             let mut fb = FrameBuffer::new(Ink::Green);
             let info = EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow, sun: None };
