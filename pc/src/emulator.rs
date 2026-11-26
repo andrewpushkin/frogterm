@@ -67,7 +67,8 @@ fn usage() -> ! {
          --battery P      pretend battery percentage\n\
          --no-rest        refresh at once, without the panel's rest between refreshes\n\
          --once [BUTTON]  no window: one wake (power-on, or BUTTON = green, next,\n\
-         \x20                previous), save out/screen.png and exit"
+         \x20                previous), save out/screen.png (the panel) and\n\
+         \x20                out/window.png (the whole window) and exit"
     );
     std::process::exit(2);
 }
@@ -121,6 +122,12 @@ pub fn main(args: &[String]) -> Result<()> {
         let wake = press.map_or(Wake::PowerOn, Wake::Button);
         let secs = dev.wake(&mut state, wake);
         println!("the device would now sleep {}", window::duration(secs));
+        ui.sleeping(Instant::now() + Duration::from_secs(secs));
+        if let Some(img) = window::snapshot(&ui) {
+            let png = o.out_dir.join("window.png");
+            img.save(&png).with_context(|| format!("save {}", png.display()))?;
+            println!("the window: {}", png.display());
+        }
         return Ok(());
     }
 

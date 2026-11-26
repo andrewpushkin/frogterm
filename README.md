@@ -108,18 +108,18 @@ comments in `config.example.toml`.
 make emulator     # the device in a window, with its three buttons to click
 make emulator ARGS="--room 22 --battery 90 --seed 3"   # preview the header, fixed photos
 make emulator ARGS=--no-rest       # no e-paper rest between refreshes
-make emulator ARGS="--once next"   # no window: one wake (green|next|previous) -> out/screen.png
+make emulator ARGS="--once next"   # no window: one wake (green|next|previous) -> out/screen.png, out/window.png
 make pc-check     # the Google album works without a login?
 make tests        # all unit tests
 ```
 
-The emulator runs the firmware's own wake logic (`core/src/app.rs`): click
-**< Previous**, **Update** (the green button) and **Next >** (or press
-Left / Space / Right) and it does exactly what the device does — stored
+The emulator runs the firmware's own wake logic (`core/src/app.rs`): click the
+buttons on top — **< Previous**, **Next >** and **Update** (the green one),
+in the device's order (or press Left / Right / Space) and it does exactly what the device does — stored
 photos, batches, the panel's rest between refreshes, the scheduled timer wakes.
 `out/` is its flash (stored screens, weather/calendar, state); delete it for
-a factory-fresh device. The window shows the LED (as on the device) and the
-last log line; the full log is in the terminal.
+a factory-fresh device. The window shows the green LED (as on the device) and
+the last log line; the full log is in the terminal.
 
 In WSL the window appears through WSLg. On Windows itself (no Docker), with
 [Rust](https://rustup.rs) installed:
