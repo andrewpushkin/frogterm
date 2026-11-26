@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use embedded_graphics::pixelcolor::Rgb888;
@@ -20,6 +20,10 @@ use u8g2_fonts::{fonts, FontRenderer};
 
 /// Reference time for the LED blinking.
 static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// How long the real panel takes to show a new image; the window fades it in
+/// over the same time.
+const REFRESH: Duration = Duration::from_secs(20);
 
 /// Height of the button bar above the panel.
 const BAR: u32 = 84;
@@ -116,12 +120,25 @@ pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
         .map_err(|e| anyhow!("cannot open a window ({e}); without a display run `make emulator ARGS=--once`"))?;
     window.set_target_fps(30);
     let mut pixels = vec![0u32; W * H];
+    // what the window shows, fading from `old` to `new` since `fade_start`
     let mut panel = vec![0x00ff_ffffu32; W * HEIGHT as usize];
+    let mut old = panel.clone();
+    let mut new = panel.clone();
+    let mut fade_start: Option<Instant> = None;
     let mut was_down = false;
     let mut held: Option<Press> = None;
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if let Some(fb) = ui.screen.lock().unwrap().take() {
-            panel_pixels(&fb, &mut panel);
+            old.copy_from_slice(&panel); // also from the middle of a fade
+            panel_pixels(&fb, &mut new);
+            fade_start = Some(Instant::now());
+        }
+        if let Some(start) = fade_start {
+            let t = start.elapsed().as_secs_f32() / REFRESH.as_secs_f32();
+            blend(&old, &new, t, &mut panel);
+            if t >= 1.0 {
+                fade_start = None;
+            }
         }
 
         // a press is a click on a button, or a key
@@ -172,6 +189,19 @@ pub fn snapshot(ui: &Shared) -> Option<image::RgbImage> {
         let p = pixels[y as usize * W + x as usize];
         image::Rgb([(p >> 16) as u8, (p >> 8) as u8, p as u8])
     }))
+}
+
+/// `out` = `from` turned into `to` by `t` (0..=1, eased: slow start and end).
+fn blend(from: &[u32], to: &[u32], t: f32, out: &mut [u32]) {
+    let t = t.clamp(0.0, 1.0);
+    let k = (t * t * (3.0 - 2.0 * t) * 256.0) as u32; // smoothstep, 0..=256
+    for ((o, &a), &b) in out.iter_mut().zip(from).zip(to) {
+        let ch = |shift: u32| {
+            let (a, b) = ((a >> shift) & 0xff, (b >> shift) & 0xff);
+            ((a * (256 - k) + b * k) >> 8) << shift
+        };
+        *o = ch(16) | ch(8) | ch(0);
+    }
 }
 
 fn panel_pixels(fb: &FrameBuffer, panel: &mut [u32]) {
@@ -319,6 +349,23 @@ mod tests {
         assert_eq!(duration(40), "40 s");
         assert_eq!(duration(185), "3 min 5 s");
         assert_eq!(duration(7 * 3600 + 12 * 60 + 9), "7 h 12 min");
+    }
+
+    #[test]
+    fn new_image_fades_in_from_the_old_one() {
+        let (from, to) = ([0x00ff_ffff, 0x0000_0000], [0x0000_0000, 0x00ff_8000]);
+        let mut out = [0u32; 2];
+        blend(&from, &to, 0.0, &mut out);
+        assert_eq!(out, from, "starts with the old image");
+        blend(&from, &to, 1.0, &mut out);
+        assert_eq!(out, to, "ends with the new one");
+        blend(&from, &to, 5.0, &mut out);
+        assert_eq!(out, to, "and stays there");
+        blend(&from, &to, 0.5, &mut out);
+        assert_eq!(out, [0x007f_7f7f, 0x007f_4000], "half way: the colours mixed");
+        blend(&from, &to, 0.1, &mut out);
+        assert!(out[0] >> 16 > 0xf0, "slow start: still almost white ({:06x})", out[0]);
+        assert_eq!(REFRESH, Duration::from_secs(20), "as long as the real panel");
     }
 
     #[test]

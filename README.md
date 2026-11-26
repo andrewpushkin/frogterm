@@ -125,7 +125,8 @@ in the device's order (or press Left / Right / Space) and it does exactly what t
 photos, batches, the panel's rest between refreshes, the scheduled timer wakes.
 `out/` is its flash (stored screens, weather/calendar, state); delete it for
 a factory-fresh device. The window shows the green LED (as on the device), a
-countdown to the next timer wake and the last log line; the full log is in the terminal.
+countdown to the next timer wake and the last log line; a new image fades in
+over 20 s, as long as the real panel takes; the full log is in the terminal.
 
 In WSL the window appears through WSLg. On Windows itself (no Docker), with
 [Rust](https://rustup.rs) installed:
