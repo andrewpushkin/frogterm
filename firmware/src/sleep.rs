@@ -58,6 +58,7 @@ pub fn spawn_press_listener() {
 /// Sleep `secs`; the buttons also wake the device if `arm_buttons`.
 pub fn deep_sleep(secs: u64, arm_buttons: bool) -> ! {
     log::info!("deep sleep for {secs} s (button wake {})", if arm_buttons { "on" } else { "off" });
+    crate::board::hold_led_for_sleep();
     unsafe {
         sys::esp_sleep_enable_timer_wakeup(secs.max(1) * 1_000_000);
         if arm_buttons {

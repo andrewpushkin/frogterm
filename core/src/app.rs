@@ -17,6 +17,17 @@ use crate::schedule::{self, UpdatePlan, WakePlan};
 use crate::weather::Forecast;
 use crate::{battery, stock, tz};
 
+/// The status LED.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Led {
+    /// Ready: a press updates right away.
+    Off,
+    /// The panel rests after a refresh: a press would have to wait.
+    On,
+    /// Working (Wi-Fi sync, downloads, drawing).
+    Blink,
+}
+
 /// What woke the device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wake {
@@ -81,7 +92,8 @@ pub struct Online {
 /// The hardware: panel, buzzer, LED, flash storage, Wi-Fi.
 pub trait Device {
     fn beep(&mut self, tones: &[Tone]);
-    fn led(&mut self, on: bool);
+    /// Sets the LED; it keeps that state through deep sleep.
+    fn led(&mut self, led: Led);
     /// System clock, if it was ever set (fallback for a lost RTC).
     fn clock(&self) -> Option<i64>;
     /// Refreshes the panel.
@@ -111,18 +123,40 @@ pub fn sleep_early(wake: Wake, now: Option<i64>, state: &State) -> Option<u64> {
 pub fn run(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r: Readings) -> u64 {
     if let Some(secs) = sleep_early(wake, r.now, state) {
         log::info!("woke {secs} s early");
-        return secs;
+        let (led, short) = led_while_asleep(r.now, state, secs);
+        dev.led(led);
+        log_led_wake(secs, short);
+        return short;
     }
     if matches!(wake, Wake::Button(_)) {
         dev.beep(beep::PRESS); // "I saw the press"
     }
-    dev.led(true);
-    let secs = run_lit(dev, state, cfg, wake, r);
-    dev.led(false);
-    secs
+    dev.led(Led::Blink);
+    let (secs, now) = run_lit(dev, state, cfg, wake, r);
+    let (led, short) = if cfg.panel_rest { led_while_asleep(dev.clock().or(now), state, secs) } else { (Led::Off, secs) };
+    dev.led(led);
+    log_led_wake(secs, short);
+    short
 }
 
-fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, mut r: Readings) -> u64 {
+fn log_led_wake(planned: u64, short: u64) {
+    if short < planned {
+        log::info!("waking in {short} s to switch the LED off, then sleeping on");
+    }
+}
+
+/// The LED for the coming deep sleep and how long to sleep: on while the
+/// panel rests after its last refresh (with a wake when the rest ends, to
+/// switch it off), else off.
+pub fn led_while_asleep(now: Option<i64>, state: &State, secs: u64) -> (Led, u64) {
+    match now.and_then(|now| schedule::panel_rest(now, state.last_refresh, schedule::PANEL_REST_SECS)) {
+        Some(left) => (Led::On, secs.min(left)),
+        None => (Led::Off, secs),
+    }
+}
+
+/// Returns the seconds to sleep and the time as known at the end.
+fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, mut r: Readings) -> (u64, Option<i64>) {
     let press = match wake {
         Wake::Button(p) => Some(p),
         Wake::Timer | Wake::PowerOn => None,
@@ -134,7 +168,7 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
     if r.battery_mv.is_some_and(battery::too_low_to_update) {
         log::warn!("battery too low for a panel refresh");
         dev.beep(beep::ERROR);
-        return sleep_until_next(dev, state, r.now, cfg.update_times);
+        return (sleep_until_next(dev, state, r.now, cfg.update_times), r.now);
     }
 
     // if this update hangs or crashes, the watchdog's 30-minute sleep must
@@ -151,10 +185,13 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
             if press.is_none() {
                 state.target = now + wait as i64;
                 dev.save_state(state);
-                return wait;
+                return (wait, Some(now));
             }
-            // a person waits awake: a pip-pip every 2 s says "all is well, just wait"
+            // a person waits awake: LED on and a pip-pip every 2 s say "all is
+            // well, just wait"
+            dev.led(Led::On);
             wait_for_panel(dev, wait);
+            dev.led(Led::Blink);
             r.now = Some(now + wait as i64);
             any_now = r.now;
         }
@@ -171,7 +208,7 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
                 dev.beep(beep::ERROR);
             }
         }
-        return sleep_until_next(dev, state, any_now, cfg.update_times);
+        return (sleep_until_next(dev, state, any_now, cfg.update_times), any_now);
     }
 
     // green button: always a full sync (new batch, weather, calendar).
@@ -199,7 +236,7 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
         Ok(now) => {
             dev.beep(beep::SUCCESS);
             state.attempt = 0;
-            sleep_until_next(dev, state, Some(now), cfg.update_times)
+            (sleep_until_next(dev, state, Some(now), cfg.update_times), Some(now))
         }
         Err(e) => {
             log::error!("update failed: {e:#}");
@@ -211,7 +248,7 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
             }
             state.target = retry.target;
             dev.save_state(state);
-            retry.secs
+            (retry.secs, any_now)
         }
     }
 }
@@ -434,6 +471,8 @@ mod tests {
         next_batch: u8,
         saved: Option<State>,
         paused_ms: Vec<u64>,
+        /// LED changes.
+        leds: Vec<Led>,
     }
 
     impl Device for Fake {
@@ -444,7 +483,11 @@ mod tests {
                 .map_or("?", |(_, n)| n);
             self.beeps.push(name);
         }
-        fn led(&mut self, _on: bool) {}
+        fn led(&mut self, led: Led) {
+            if self.leds.last() != Some(&led) {
+                self.leds.push(led);
+            }
+        }
         fn clock(&self) -> Option<i64> {
             None
         }
@@ -517,7 +560,7 @@ mod tests {
         assert_eq!((st.stock_count, st.current, st.seen), (3, 0, 1));
         assert_eq!(dev.beeps, vec!["ok"], "no press chirp on power-on");
         assert_eq!(st.target, schedule::next_update(T0, &[(6, 0)]));
-        assert_eq!(secs as i64, st.target - T0);
+        assert_eq!(secs as i64, schedule::PANEL_REST_SECS, "a short sleep: the LED goes off when the rest ends");
         assert_eq!(dev.saved, Some(st));
     }
 
@@ -588,6 +631,7 @@ mod tests {
         let (mut dev, mut st) = stocked(3);
         run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
         dev.beeps.clear();
+        dev.leds.clear();
         let secs = run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 20));
         assert_eq!(dev.paused_ms, vec![2000; 80], "the panel rests 3 min, for buttons too: 160 s left");
         let mut expected = vec!["press"];
@@ -597,7 +641,8 @@ mod tests {
         assert_eq!(dev.shown, vec![Some(1), Some(2)]);
         assert_eq!(st.last_refresh, Some(T0 + 180));
         assert_eq!(st.target, schedule::next_update(T0 + 180, &[(6, 0)]));
-        assert_eq!(secs as i64, st.target - (T0 + 180));
+        assert_eq!(secs as i64, schedule::PANEL_REST_SECS);
+        assert_eq!(dev.leds, vec![Led::Blink, Led::On, Led::Blink, Led::On], "on while waiting, blinking while updating");
     }
 
     #[test]
@@ -620,12 +665,51 @@ mod tests {
     }
 
     #[test]
+    fn led_blinks_while_working_then_stays_on_while_the_panel_rests() {
+        let (mut dev, mut st) = stocked(3);
+        let secs = run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
+        assert_eq!(dev.leds, vec![Led::Blink, Led::On]);
+        assert_eq!(secs as i64, schedule::PANEL_REST_SECS, "wake when the rest ends");
+        assert_eq!(st.target, schedule::next_update(T0, &[(6, 0)]), "the scheduled update stays planned");
+    }
+
+    #[test]
+    fn the_wake_at_the_end_of_the_rest_switches_the_led_off() {
+        let (mut dev, mut st) = stocked(3);
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
+        dev.leds.clear();
+        let now = T0 + schedule::PANEL_REST_SECS;
+        let secs = run(&mut dev, &mut st, &cfg(), Wake::Timer, at(now));
+        assert_eq!(dev.leds, vec![Led::Off]);
+        assert_eq!(secs as i64, st.target - now, "back to sleep until the scheduled update");
+        assert_eq!(dev.shown.len(), 1, "no refresh");
+    }
+
+    #[test]
+    fn led_is_off_after_a_failed_update() {
+        let mut dev = Fake { offline: true, ..Fake::default() };
+        let mut st = State::default();
+        run(&mut dev, &mut st, &cfg(), Wake::PowerOn, at(T0));
+        assert_eq!(dev.leds, vec![Led::Blink, Led::Off]);
+    }
+
+    #[test]
+    fn led_while_asleep_follows_the_panel_rest() {
+        let st = State { last_refresh: Some(T0), ..State::default() };
+        assert_eq!(led_while_asleep(Some(T0 + 30), &st, 3600), (Led::On, 150));
+        assert_eq!(led_while_asleep(Some(T0 + 30), &st, 60), (Led::On, 60), "an earlier wake stays");
+        assert_eq!(led_while_asleep(Some(T0 + 180), &st, 3600), (Led::Off, 3600));
+        assert_eq!(led_while_asleep(None, &st, 3600), (Led::Off, 3600), "time unknown");
+    }
+
+    #[test]
     fn without_panel_rest_every_press_refreshes() {
         let (mut dev, mut st) = stocked(3);
         let cfg = Config { panel_rest: false, ..cfg() };
         run(&mut dev, &mut st, &cfg, Wake::Button(Press::Next), at(T0));
         run(&mut dev, &mut st, &cfg, Wake::Button(Press::Next), at(T0 + 1));
         assert_eq!(dev.shown, vec![Some(1), Some(2)]);
+        assert_eq!(dev.leds.last(), Some(&Led::Off), "no rest, nothing to wait for");
     }
 
     #[test]

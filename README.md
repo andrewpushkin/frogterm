@@ -118,7 +118,7 @@ The emulator runs the firmware's own wake logic (`core/src/app.rs`): click
 Left / Space / Right) and it does exactly what the device does — stored
 photos, batches, the panel's rest between refreshes, the scheduled timer wakes.
 `out/` is its flash (stored screens, weather/calendar, state); delete it for
-a factory-fresh device. The window shows the LED (on while awake) and the
+a factory-fresh device. The window shows the LED (as on the device) and the
 last log line; the full log is in the terminal.
 
 In WSL the window appears through WSLg. On Windows itself (no Docker), with
@@ -155,6 +155,12 @@ make flash FEATURES=bars          # test build: six colour bars only
 | pip-pip every 2 s | all is well, waiting for the panel's 3-minute rest |
 | one beep | update finished |
 | three low beeps | update failed (retried in 30 min, up to 3 times) |
+
+| LED | Meaning |
+|---|---|
+| blinking | working (Wi-Fi sync, downloads, drawing) |
+| on | the panel rests after a refresh (3 min): a press has to wait |
+| off | ready: a press updates right away |
 
 - **Green button**: always syncs over Wi-Fi: downloads a new batch of
   photos, the weather and today's and tomorrow's events, and shows the first

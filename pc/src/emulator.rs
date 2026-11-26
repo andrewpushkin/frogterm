@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{ensure, Context, Result};
 use embedded_graphics::pixelcolor::RgbColor;
-use frogterm_core::app::{self, Device, Online, Readings, State, Wake};
+use frogterm_core::app::{self, Device, Led, Online, Readings, State, Wake};
 use frogterm_core::beep::{self, Tone};
 use frogterm_core::buttons::Press;
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
@@ -216,8 +216,13 @@ impl Device for Emulated {
         }
     }
 
-    fn led(&mut self, on: bool) {
-        self.ui.set_busy(on);
+    fn led(&mut self, led: Led) {
+        log::info!("LED {}", match led {
+            Led::Off => "off (ready)",
+            Led::On => "on (the panel rests)",
+            Led::Blink => "blinking (working)",
+        });
+        self.ui.set_led(led);
     }
 
     fn clock(&self) -> Option<i64> {

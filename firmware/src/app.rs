@@ -10,7 +10,7 @@ use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use frogterm_core::album::{self, Photo};
-use frogterm_core::app::{self, Device, Online, Readings, State};
+use frogterm_core::app::{self, Device, Led, Online, Readings, State};
 use frogterm_core::beep::Tone;
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
 use frogterm_core::framebuf::{FrameBuffer, Ink};
@@ -104,8 +104,8 @@ impl Device for Reterminal<'_> {
         self.board.beep(tones);
     }
 
-    fn led(&mut self, on: bool) {
-        self.board.led(on);
+    fn led(&mut self, led: Led) {
+        crate::board::set_led(led);
     }
 
     fn clock(&self) -> Option<i64> {
@@ -216,12 +216,15 @@ fn run_inner() -> Result<std::convert::Infallible> {
     log::info!("frogterm {} woke by {wake:?}, RTC {rtc_now:?}", env!("CARGO_PKG_VERSION"));
 
     // woke early: straight back to sleep, before powering anything up
+    // (and the LED: off once the panel's rest after the last refresh is over)
     if let Some(secs) = app::sleep_early(wake, rtc_now, &state) {
         log::info!("woke {secs} s early");
+        let (led, secs) = app::led_while_asleep(rtc_now, &state, secs);
+        crate::board::set_led(led);
         deep_sleep(secs, schedule::arm_button(button_held()));
     }
 
-    let mut board = Board::new(p.pins.gpio6, p.pins.gpio21, p.pins.gpio16, p.pins.gpio14)?;
+    let mut board = Board::new(p.pins.gpio21, p.pins.gpio16, p.pins.gpio14)?;
     crate::sleep::spawn_press_listener();
     // watchdog: never stay awake (battery) if anything hangs
     std::thread::spawn(|| {

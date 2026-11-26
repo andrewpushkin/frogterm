@@ -1,24 +1,32 @@
 //! Buzzer (GPIO45, LEDC), status LED (GPIO6, active low), battery (ADC1 GPIO1,
 //! enabled by GPIO21, divider x2), and the SD card kept off the panel's SPI bus.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
+
 use anyhow::Result;
 use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::hal::gpio::{Output, OutputPin, PinDriver};
 use esp_idf_svc::sys;
+use frogterm_core::app::Led;
 use frogterm_core::beep::Tone;
 
 const BUZZER_GPIO: i32 = 45;
+/// Status LED, active low; an RTC pin, so its level can be held in deep sleep.
+const LED_GPIO: i32 = 6;
+/// `Led` as u8: what the LED shows (the blinker thread reads it).
+static LED_MODE: AtomicU8 = AtomicU8::new(Led::Off as u8);
+const BLINK_MS: u64 = 250;
 
 pub struct Board<'d> {
-    led: PinDriver<'d, Output>,
     battery_enable: PinDriver<'d, Output>,
     _sd_power: PinDriver<'d, Output>,
     _sd_cs: PinDriver<'d, Output>,
 }
 
 impl<'d> Board<'d> {
+    /// Also takes over the LED (from its deep-sleep hold) and starts its blinker.
     pub fn new(
-        led: impl OutputPin + 'd,
         battery_enable: impl OutputPin + 'd,
         sd_power: impl OutputPin + 'd,
         sd_cs: impl OutputPin + 'd,
@@ -27,13 +35,8 @@ impl<'d> Board<'d> {
         sd_power.set_low()?;
         let mut sd_cs = PinDriver::output(sd_cs)?;
         sd_cs.set_high()?;
-        let mut led = PinDriver::output(led)?;
-        led.set_high()?; // off
-        Ok(Self { led, battery_enable: PinDriver::output(battery_enable)?, _sd_power: sd_power, _sd_cs: sd_cs })
-    }
-
-    pub fn led(&mut self, on: bool) {
-        let _ = if on { self.led.set_low() } else { self.led.set_high() };
+        start_led();
+        Ok(Self { battery_enable: PinDriver::output(battery_enable)?, _sd_power: sd_power, _sd_cs: sd_cs })
     }
 
     pub fn beep(&mut self, tones: &[Tone]) {
@@ -47,6 +50,65 @@ impl<'d> Board<'d> {
         let mv = read_adc1_ch0_mv();
         let _ = self.battery_enable.set_low();
         mv.map(|v| v * 2)
+    }
+}
+
+fn led_mode() -> Led {
+    match LED_MODE.load(Ordering::Relaxed) {
+        0 => Led::Off,
+        1 => Led::On,
+        _ => Led::Blink,
+    }
+}
+
+fn led_level(lit: bool) {
+    unsafe {
+        sys::gpio_set_level(LED_GPIO, u32::from(!lit)); // active low
+    }
+}
+
+/// Releases the LED pin from its deep-sleep hold, drives it as an output and
+/// starts the blinker thread.
+fn start_led() {
+    unsafe {
+        sys::gpio_hold_dis(LED_GPIO);
+        sys::gpio_set_direction(LED_GPIO, sys::gpio_mode_t_GPIO_MODE_OUTPUT);
+    }
+    led_level(led_mode() != Led::Off);
+    let spawned = std::thread::Builder::new().name("led".into()).stack_size(2048).spawn(|| {
+        let mut lit = false;
+        loop {
+            std::thread::sleep(Duration::from_millis(BLINK_MS));
+            if led_mode() == Led::Blink {
+                lit = !lit;
+                led_level(lit);
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        log::warn!("LED blinker: {e}");
+    }
+}
+
+/// Off, on or blinking (works before `Board::new` too: then only for the
+/// coming deep sleep).
+pub fn set_led(led: Led) {
+    LED_MODE.store(led as u8, Ordering::Relaxed);
+    if led != Led::Blink {
+        led_level(led == Led::On);
+    }
+}
+
+/// Before deep sleep: latch the LED (on stays on, anything else off) so it
+/// keeps its state while the chip sleeps.
+pub fn hold_led_for_sleep() {
+    unsafe {
+        sys::gpio_hold_dis(LED_GPIO);
+        sys::gpio_set_direction(LED_GPIO, sys::gpio_mode_t_GPIO_MODE_OUTPUT);
+    }
+    led_level(led_mode() == Led::On);
+    unsafe {
+        sys::gpio_hold_en(LED_GPIO);
     }
 }
 

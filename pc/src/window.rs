@@ -2,7 +2,7 @@
 //! and, under it, the reTerminal's three buttons to click, the LED and what
 //! the device is doing.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -11,11 +11,15 @@ use anyhow::{anyhow, Result};
 use embedded_graphics::pixelcolor::Rgb888;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Circle, PrimitiveStyle, Rectangle, RoundedRectangle};
+use frogterm_core::app::Led;
 use frogterm_core::buttons::Press;
 use frogterm_core::framebuf::{FrameBuffer, HEIGHT, WIDTH};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::{fonts, FontRenderer};
+
+/// Reference time for the LED blinking.
+static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// Height of the button bar under the panel.
 const BAR: u32 = 84;
@@ -30,8 +34,10 @@ static STATUS_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR10_
 pub struct Shared {
     /// A new panel image, not drawn yet.
     screen: Mutex<Option<FrameBuffer>>,
-    /// The device is awake (LED on): presses only chirp.
+    /// The device is awake: presses only chirp.
     busy: AtomicBool,
+    /// The status LED: 0 off, 1 on, 2 blinking.
+    led: AtomicU8,
     /// When the timer wakes the sleeping device.
     wake_at: Mutex<Option<Instant>>,
 }
@@ -45,6 +51,19 @@ impl Shared {
         self.busy.store(busy, Ordering::Relaxed);
         if busy {
             *self.wake_at.lock().unwrap() = None;
+        }
+    }
+
+    pub fn set_led(&self, led: Led) {
+        self.led.store(led as u8, Ordering::Relaxed);
+    }
+
+    /// Whether the LED is lit now (blinking: 4 times a second).
+    fn led_lit(&self) -> bool {
+        match self.led.load(Ordering::Relaxed) {
+            0 => false,
+            1 => true,
+            _ => START.get_or_init(Instant::now).elapsed().as_millis() / 250 % 2 == 0,
         }
     }
 
@@ -132,14 +151,14 @@ pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
 
         pixels[..panel.len()].copy_from_slice(&panel);
         let wake_in = ui.wake_at.lock().unwrap().map(|at| at.saturating_duration_since(Instant::now()).as_secs());
-        draw_bar(&mut pixels, ui.busy.load(Ordering::Relaxed), held, wake_in, &crate::logger::last());
+        draw_bar(&mut pixels, ui.busy.load(Ordering::Relaxed), ui.led_lit(), held, wake_in, &crate::logger::last());
         window.update_with_buffer(&pixels, W, H).map_err(|e| anyhow!("window: {e}"))?;
     }
     Ok(())
 }
 
 /// Buttons, LED and status line under the panel.
-fn draw_bar(pixels: &mut [u32], awake: bool, held: Option<Press>, wake_in: Option<u64>, last_log: &str) {
+fn draw_bar(pixels: &mut [u32], awake: bool, led_lit: bool, held: Option<Press>, wake_in: Option<u64>, last_log: &str) {
     let mut c = Canvas(pixels);
     let bar = Rectangle::new(Point::new(0, HEIGHT as i32), Size::new(WIDTH, BAR));
     let _ = bar.into_styled(PrimitiveStyle::with_fill(Rgb888::new(52, 54, 58))).draw(&mut c);
@@ -160,8 +179,8 @@ fn draw_bar(pixels: &mut [u32], awake: bool, held: Option<Press>, wake_in: Optio
             &mut c,
         );
     }
-    // the LED is on while the device is awake
-    let led = if awake { Rgb888::new(255, 70, 50) } else { Rgb888::new(90, 40, 40) };
+    // blinking while working, on while the panel rests, off when ready
+    let led = if led_lit { Rgb888::new(255, 70, 50) } else { Rgb888::new(90, 40, 40) };
     let y = HEIGHT as i32 + 66;
     let _ = Circle::new(Point::new(12, y - 6), 12).into_styled(PrimitiveStyle::with_fill(led)).draw(&mut c);
     let state = match (awake, wake_in) {
@@ -245,7 +264,7 @@ mod tests {
     #[test]
     fn bar_draws_inside_the_window() {
         let mut px = vec![0u32; W * H];
-        draw_bar(&mut px, false, Some(Press::Update), Some(3600), "sleeping until Thu 26 Nov 06:00 local, °C ♪ Шалом");
+        draw_bar(&mut px, false, true, Some(Press::Update), Some(3600), "sleeping until Thu 26 Nov 06:00 local, °C ♪ Шалом");
         assert!(px[..W * HEIGHT as usize].iter().all(|&p| p == 0), "the panel area is left alone");
         let c = button_rect(1).top_left + Point::new(20, 5);
         assert_ne!(px[c.y as usize * W + c.x as usize], 0, "the green button is drawn");
