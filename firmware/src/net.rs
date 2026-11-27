@@ -59,14 +59,14 @@ impl Net {
         wifi.start()?;
         if let Err(e) = wifi.connect() {
             if last_ap.is_none() {
-                log_visible_aps(&mut wifi, ssid);
+                after_failed_join(&mut wifi, ssid);
                 return Err(e).context("Wi-Fi connect");
             }
             log::warn!("quick join failed ({e}), scanning all channels");
             wifi.set_configuration(&config(None)?)?;
             allow_wpa3_h2e()?;
             if let Err(e) = wifi.connect() {
-                log_visible_aps(&mut wifi, ssid);
+                after_failed_join(&mut wifi, ssid);
                 return Err(e).context("Wi-Fi connect");
             }
         }
@@ -121,10 +121,13 @@ fn allow_wpa3_h2e() -> Result<()> {
     Ok(())
 }
 
-/// After a failed join: what the radio can see, to tell "no signal" from
-/// "router found but refused" (e.g. a security mode the device lacks).
-fn log_visible_aps(wifi: &mut BlockingWifi<EspWifi<'static>>, ssid: &str) {
-    match wifi.scan() {
+/// After a failed join: logs what the radio can see, to tell "no signal" from
+/// "router found but refused". If our network is not even heard, the stored RF
+/// calibration is suspect: "phy wait timeout" at start-up (channel tuning did
+/// not finish) left the radio deaf on every wake while the router was fine.
+/// Erasing it makes the next wake calibrate from scratch.
+fn after_failed_join(wifi: &mut BlockingWifi<EspWifi<'static>>, ssid: &str) {
+    let heard = match wifi.scan() {
         Ok(mut aps) => {
             aps.sort_by_key(|a| std::cmp::Reverse(a.signal_strength));
             let ours = aps.iter().filter(|a| a.ssid.as_str() == ssid).count();
@@ -139,8 +142,23 @@ fn log_visible_aps(wifi: &mut BlockingWifi<EspWifi<'static>>, ssid: &str) {
                     if a.ssid.as_str() == ssid { "  <- ours" } else { "" }
                 );
             }
+            ours > 0
         }
-        Err(e) => log::warn!("Wi-Fi scan failed: {e}"),
+        Err(e) => {
+            log::warn!("Wi-Fi scan failed: {e}");
+            false
+        }
+    };
+    if !heard {
+        extern "C" {
+            /// ESP-IDF esp_phy (not in the esp-idf-sys bindings).
+            fn esp_phy_erase_cal_data_in_nvs() -> esp_idf_svc::sys::esp_err_t;
+        }
+        // SAFETY: plain ESP-IDF call; it only erases the NVS "phy" namespace
+        match esp_idf_svc::sys::esp!(unsafe { esp_phy_erase_cal_data_in_nvs() }) {
+            Ok(()) => log::warn!("{ssid:?} not heard: RF calibration erased, the next wake recalibrates fully"),
+            Err(e) => log::warn!("could not erase the RF calibration: {e}"),
+        }
     }
 }
 
