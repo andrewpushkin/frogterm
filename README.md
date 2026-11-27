@@ -42,7 +42,7 @@ Faces blurred for this README.*
 
 ## What you need
 
-- Windows with WSL2, Docker inside WSL, `make`
+- Windows with WSL2, Docker with buildx (`docker-buildx`) inside WSL, `make`
 - [usbipd-win](https://github.com/dorssel/usbipd-win) to give WSL the device's USB port
 - a Google Photos album and (optionally) Google calendars — see below
 

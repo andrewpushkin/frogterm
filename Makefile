@@ -65,7 +65,7 @@ monitor:
 image: build/.image-stamp
 
 build/.image-stamp: Dockerfile
-	docker build -q -t $(IMAGE) . >/dev/null
+	docker buildx build --load -q -t $(IMAGE) . >/dev/null
 	@mkdir -p build && touch $@
 
 tests: image
