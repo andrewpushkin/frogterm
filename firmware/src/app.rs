@@ -64,6 +64,7 @@ impl Nvs {
             seen,
             last_refresh: nvs.get_i64("refreshed")?,
             current: nvs.get_u8("current")?.unwrap_or(0),
+            sync_failed: nvs.get_u8("sync_failed")? == Some(1),
         };
         Ok((Nvs { nvs, last_ap }, state))
     }
@@ -75,6 +76,7 @@ impl Nvs {
         let _ = nvs.set_u8("stock_n", s.stock_count);
         let _ = nvs.set_u32("seen", s.seen);
         let _ = nvs.set_u8("current", s.current);
+        let _ = nvs.set_u8("sync_failed", u8::from(s.sync_failed));
         if let Some(t) = s.last_refresh {
             let _ = nvs.set_i64("refreshed", t);
         }
@@ -306,7 +308,10 @@ fn online(cfg: &Settings, net: &mut Net, now: i64, batch: u8, stored_list: Optio
         let events = calendars.join().map_err(|_| anyhow!("calendar thread panicked"))?;
         Ok((forecast, events, screens))
     })?;
-    Ok(Online { now, forecast, events, batch })
+    let (events, calendars_failed) = events;
+    // all calendars failing shows as `events: None`; some of them only here
+    let missing = if calendars_failed > 0 && events.is_some() { vec!["a calendar"] } else { vec![] };
+    Ok(Online { now, forecast, events, batch, missing })
 }
 
 /// Cached list from flash, re-read from Google when missing or a week old.
@@ -460,10 +465,11 @@ fn fetch_weather(cfg: &Settings) -> Result<Forecast> {
     f
 }
 
-/// All of today's and tomorrow's events of all calendars; `None` if none could be read.
-fn fetch_calendars(cfg: &Settings, today: frogterm_core::date::Date) -> Option<(Vec<DayEvent>, Vec<DayEvent>)> {
+/// All of today's and tomorrow's events of all calendars (`None` if none could
+/// be read; none configured is an empty day) and how many calendars failed.
+fn fetch_calendars(cfg: &Settings, today: frogterm_core::date::Date) -> (Option<calendar::TwoDays>, usize) {
     if cfg.calendars.is_empty() {
-        return None;
+        return (Some((Vec::new(), Vec::new())), 0);
     }
     let t = std::time::Instant::now();
     // every calendar in its own thread
@@ -499,8 +505,9 @@ fn fetch_calendars(cfg: &Settings, today: frogterm_core::date::Date) -> Option<(
     });
     let ok = results.iter().filter(|r| r.is_some()).count();
     log::info!("{ok} of {} calendars in {:.1} s", cfg.calendars.len(), t.elapsed().as_secs_f32());
+    let failed = cfg.calendars.len() - ok;
     if ok == 0 {
-        return None;
+        return (None, failed);
     }
     let (mut all_today, mut all_tomorrow) = (Vec::new(), Vec::new());
     for (a, b) in results.into_iter().flatten() {
@@ -509,5 +516,5 @@ fn fetch_calendars(cfg: &Settings, today: frogterm_core::date::Date) -> Option<(
     }
     calendar::sort_events(&mut all_today);
     calendar::sort_events(&mut all_tomorrow);
-    Some((all_today, all_tomorrow))
+    (Some((all_today, all_tomorrow)), failed)
 }

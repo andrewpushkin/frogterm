@@ -286,8 +286,11 @@ impl Device for Emulated {
             let events = fetch_calendars(agent, cfg, today);
             (weather.join().ok().flatten(), events)
         });
+        let (events, calendars_failed) = events;
         let screens = if batch > 0 { self.photo_batch(now as u64, batch)? } else { Vec::new() };
-        Ok(Online { now, forecast, events, batch: screens })
+        // all calendars failing shows as `events: None`; some of them only here
+        let missing = if calendars_failed > 0 && events.is_some() { vec!["a calendar"] } else { vec![] };
+        Ok(Online { now, forecast, events, batch: screens, missing })
     }
 }
 
@@ -399,11 +402,12 @@ fn decode(jpeg: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
     Ok(img.to_rgb8().into_raw())
 }
 
-/// Today's and tomorrow's events of all calendars; `None` if none could be read.
-fn fetch_calendars(agent: &ureq::Agent, cfg: &Config, today: Date) -> Option<(Vec<DayEvent>, Vec<DayEvent>)> {
+/// Today's and tomorrow's events of all calendars (`None` if none could be
+/// read; none configured is an empty day) and how many calendars failed.
+fn fetch_calendars(agent: &ureq::Agent, cfg: &Config, today: Date) -> (Option<calendar::TwoDays>, usize) {
     if cfg.calendars.is_empty() {
         log::info!("no calendars in config");
-        return None;
+        return (Some((Vec::new(), Vec::new())), 0);
     }
     let results: Vec<_> = std::thread::scope(|s| {
         let handles: Vec<_> = cfg.calendars.iter().map(|url| s.spawn(move || read_calendar(agent, url, today))).collect();
@@ -422,12 +426,13 @@ fn fetch_calendars(agent: &ureq::Agent, cfg: &Config, today: Date) -> Option<(Ve
             Err(e) => log::warn!("calendar {}: {e:#}", i + 1),
         }
     }
+    let failed = cfg.calendars.len() - ok;
     if ok == 0 {
-        return None;
+        return (None, failed);
     }
     calendar::sort_events(&mut all_today);
     calendar::sort_events(&mut all_tomorrow);
-    Some((all_today, all_tomorrow))
+    (Some((all_today, all_tomorrow)), failed)
 }
 
 /// Streams one iCal file through two scanners (today, tomorrow), as the
@@ -477,13 +482,14 @@ const STATE_HEADER: &str = "frogterm-state v1";
 /// The device's NVS state as text (out/state.txt).
 fn state_to_text(s: &State) -> String {
     format!(
-        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\ncurrent {}\n",
+        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\ncurrent {}\nsync_failed {}\n",
         s.target,
         s.attempt,
         s.stock_count,
         s.seen,
         s.last_refresh.map_or("-".into(), |t| t.to_string()),
-        s.current
+        s.current,
+        u8::from(s.sync_failed)
     )
 }
 
@@ -502,6 +508,7 @@ fn state_from_text(text: &str) -> Option<State> {
             "seen" => s.seen = v.parse().ok()?,
             "refreshed" => s.last_refresh = if v == "-" { None } else { Some(v.parse().ok()?) },
             "current" => s.current = v.parse().ok()?,
+            "sync_failed" => s.sync_failed = v == "1",
             _ => {}
         }
     }
@@ -543,7 +550,15 @@ mod tests {
 
     #[test]
     fn state_round_trips_through_text() {
-        let s = State { target: 1_795_600_000, attempt: 2, stock_count: 10, seen: 0b1011, last_refresh: Some(1_795_590_000), current: 3 };
+        let s = State {
+            target: 1_795_600_000,
+            attempt: 2,
+            stock_count: 10,
+            seen: 0b1011,
+            last_refresh: Some(1_795_590_000),
+            current: 3,
+            sync_failed: true,
+        };
         assert_eq!(state_from_text(&state_to_text(&s)), Some(s));
         assert_eq!(state_from_text(&state_to_text(&State::default())), Some(State::default()));
         assert_eq!(state_from_text("garbage"), None);

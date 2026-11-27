@@ -12,7 +12,7 @@
 //! ```
 
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Triangle};
+use embedded_graphics::primitives::{Arc, Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Triangle};
 use u8g2_fonts::fonts;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::FontRenderer;
@@ -58,6 +58,8 @@ pub struct EventsInfo<'a> {
     pub tomorrow: bool,
     /// Sunrise and sunset (local), shown left of `status`.
     pub sun: Option<((u8, u8), (u8, u8))>,
+    /// The last sync failed: a crossed-out Wi-Fi icon left of `status`.
+    pub sync_failed: bool,
 }
 
 static TITLE_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB12_tf>();
@@ -232,6 +234,9 @@ pub fn draw_events_box(fb: &mut FrameBuffer, info: &EventsInfo, backdrop: Backdr
     // status holds the configured place name, which may be Cyrillic or Hebrew
     let status_x = right - mixed_width(info.status);
     pen.mixed(&mut t, info.status, at(status_x, HEADER_Y + 1), Ink::Black);
+    if info.sync_failed {
+        no_wifi_icon(&mut t, at(status_x - 6 - 16, HEADER_Y + 1), pen.halo);
+    }
     let _ = Line::new(at(PAD, RULE_Y), at(BOX_W as i32 - PAD, RULE_Y)).into_styled(PrimitiveStyle::with_stroke(Ink::Black, 1)).draw(&mut t);
 
     let events = match info.events {
@@ -316,6 +321,20 @@ fn battery_icon<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point, pct: u8, plate:
         let ink = if pct < 20 { Ink::Red } else { Ink::Green };
         let _ = Rectangle::new(p + Point::new(1, 1), Size::new(w, 6)).into_styled(PrimitiveStyle::with_fill(ink)).draw(t);
     }
+}
+
+/// 16x13 Wi-Fi signal (black) struck through in red: the last sync failed.
+fn no_wifi_icon<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point, plate: bool) {
+    if plate {
+        let _ = Rectangle::new(p - Point::new(1, 1), Size::new(18, 15)).into_styled(PrimitiveStyle::with_fill(Ink::White)).draw(t);
+    }
+    let base = p + Point::new(8, 12);
+    let bold = PrimitiveStyle::with_stroke(Ink::Black, 2);
+    for d in [10, 18, 26] {
+        let _ = Arc::with_center(base, d, 225.0.deg(), 90.0.deg()).into_styled(bold).draw(t);
+    }
+    let _ = Circle::with_center(base - Point::new(0, 1), 4).into_styled(PrimitiveStyle::with_fill(Ink::Black)).draw(t);
+    let _ = Line::new(p + Point::new(1, 12), p + Point::new(15, 0)).into_styled(PrimitiveStyle::with_stroke(Ink::Red, 2)).draw(t);
 }
 
 /// 11x10 sunrise/sunset glyph: half sun on the horizon with an up/down arrow.
@@ -562,6 +581,7 @@ mod tests {
                 events: ev.as_deref(),
                 tomorrow: false,
                 sun: None,
+                sync_failed: false,
             },
             Backdrop::Solid,
         );
@@ -733,7 +753,16 @@ mod tests {
         let ev = refs(&ev);
         draw_events_box(
             &mut fb,
-            &EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow: false, sun: None },
+            &EventsInfo {
+                date: "Wed 25 Nov",
+                status: "x",
+                room_c: None,
+                battery_pct: None,
+                events: Some(&ev),
+                tomorrow: false,
+                sun: None,
+                sync_failed: false,
+            },
             Backdrop::Clear,
         );
         for r in [weather_rect(), events_rect()] {
@@ -765,8 +794,16 @@ mod tests {
 
     fn header(room_c: Option<f32>, battery_pct: Option<u8>) -> FrameBuffer {
         let mut fb = FrameBuffer::new(Ink::Green);
-        let info =
-            EventsInfo { date: "Wed 25 Nov", status: "Tel Aviv 06:00", room_c, battery_pct, events: Some(&[]), tomorrow: false, sun: None };
+        let info = EventsInfo {
+            date: "Wed 25 Nov",
+            status: "Tel Aviv 06:00",
+            room_c,
+            battery_pct,
+            events: Some(&[]),
+            tomorrow: false,
+            sun: None,
+            sync_failed: false,
+        };
         draw_events_box(&mut fb, &info, Backdrop::Solid);
         fb
     }
@@ -795,8 +832,16 @@ mod tests {
         let ev = refs(&ev);
         let draw = |tomorrow| {
             let mut fb = FrameBuffer::new(Ink::Green);
-            let info =
-                EventsInfo { date: "Wed 25 Nov", status: "x", room_c: None, battery_pct: None, events: Some(&ev), tomorrow, sun: None };
+            let info = EventsInfo {
+                date: "Wed 25 Nov",
+                status: "x",
+                room_c: None,
+                battery_pct: None,
+                events: Some(&ev),
+                tomorrow,
+                sun: None,
+                sync_failed: false,
+            };
             draw_events_box(&mut fb, &info, Backdrop::Solid);
             fb
         };
@@ -877,6 +922,7 @@ mod tests {
                 events: Some(&[]),
                 tomorrow: false,
                 sun,
+                sync_failed: false,
             };
             draw_events_box(&mut fb, &info, Backdrop::Solid);
             fb

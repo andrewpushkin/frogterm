@@ -52,6 +52,9 @@ pub struct State {
     pub last_refresh: Option<i64>,
     /// Stored photo slot on the screen now (for next/previous browsing).
     pub current: u8,
+    /// The last sync failed, completely or in part: the screen shows a
+    /// crossed-out Wi-Fi icon until a sync gets everything.
+    pub sync_failed: bool,
 }
 
 /// Settings the wake logic needs.
@@ -89,6 +92,9 @@ pub struct Online {
     pub events: Option<(Vec<DayEvent>, Vec<DayEvent>)>,
     /// New ready-to-show photo screens (empty unless asked for).
     pub batch: Vec<FrameBuffer>,
+    /// Parts that did not come although others did (e.g. one calendar of
+    /// two), for the device to report what `forecast`/`events` cannot show.
+    pub missing: Vec<&'static str>,
 }
 
 /// The hardware: panel, buzzer, LED, flash storage, Wi-Fi.
@@ -250,6 +256,8 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, m
         }
         Err(e) => {
             log::error!("update failed: {e:#}");
+            state.sync_failed = true;
+            show_failed_sync(dev, state, cfg, any_now.or_else(|| dev.clock()), r);
             dev.beep(beep::ERROR);
             state.attempt = state.attempt.saturating_add(1);
             let retry = schedule::after_failure(any_now, state.attempt, cfg.update_times);
@@ -290,12 +298,26 @@ fn browse(
     let photo = dev.load_screen(slot).ok_or_else(|| anyhow!("stored photo {slot} unreadable"))?;
     log::info!("{dir:?}: stored photo {} of {}", slot + 1, state.stock_count);
     let info = stored_info.unwrap_or(Info { fetched_at: 0, date: tz::to_local(now).0, forecast: None, events: None, tomorrow: None });
-    let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c, (slot + 1, state.stock_count));
+    let fb = compose(cfg, photo, &info, now, r, (slot + 1, state.stock_count), state.sync_failed);
     dev.show(fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
     state.last_refresh = Some(now);
     Ok(())
+}
+
+/// After a failed update: the photo already on the panel again, with the
+/// stored weather and events and the crossed-out Wi-Fi icon, so the failure
+/// is visible (nothing is drawn if there is no stored photo or no time).
+fn show_failed_sync(dev: &mut impl Device, state: &mut State, cfg: &Config, now: Option<i64>, r: Readings) {
+    let Some(now) = now else { return };
+    let Some(photo) = dev.load_screen(state.current) else { return };
+    let info = dev.load_info().unwrap_or(Info { fetched_at: 0, date: tz::to_local(now).0, forecast: None, events: None, tomorrow: None });
+    let fb = compose(cfg, photo, &info, now, r, (state.current + 1, state.stock_count), true);
+    match dev.show(fb) {
+        Ok(()) => state.last_refresh = Some(now),
+        Err(e) => log::warn!("could not show the failed sync: {e:#}"),
+    }
 }
 
 /// Green button / timer: fetch what the plan says, show a photo; returns the time.
@@ -317,6 +339,20 @@ fn update(
         UpdatePlan::RefreshInfo | UpdatePlan::RefreshAll => {
             let all = plan == UpdatePlan::RefreshAll;
             let o = dev.go_online(r.now, if all { cfg.photo_batch } else { 0 })?;
+            let mut missing = o.missing;
+            if o.forecast.is_none() {
+                missing.push("weather");
+            }
+            if o.events.is_none() {
+                missing.push("calendars");
+            }
+            if all && o.batch.len() < usize::from(cfg.photo_batch) {
+                missing.push("photos");
+            }
+            if !missing.is_empty() {
+                log::warn!("sync incomplete, missing: {}", missing.join(", "));
+            }
+            state.sync_failed = !missing.is_empty();
             let info = fresh_info(o.now, o.forecast, o.events, stored_info);
             dev.save_info(&info);
             (o.now, info, all.then_some(o.batch))
@@ -349,7 +385,7 @@ fn update(
     let (slot, photo) = photo.ok_or_else(|| anyhow!("no photo to show"))?;
     log::info!("showing stored photo {} of {}", slot + 1, state.stock_count);
 
-    let fb = compose(cfg, photo, &info, now, r.battery_mv, r.room_c, (slot + 1, state.stock_count));
+    let fb = compose(cfg, photo, &info, now, r, (slot + 1, state.stock_count), state.sync_failed);
     dev.show(fb)?;
     state.current = slot;
     state.seen = stock::mark(state.seen, slot);
@@ -413,15 +449,16 @@ pub fn place_photo(fb: &mut FrameBuffer, area: &Rectangle, mut rgb: Vec<u8>, opa
 }
 
 /// Draws the events and weather boxes and the photo counter (`n` of `total`
-/// stored photos) over a stored photo screen.
+/// stored photos) over a stored photo screen; `sync_failed` adds the
+/// crossed-out Wi-Fi icon.
 pub fn compose(
     cfg: &Config,
     mut fb: FrameBuffer,
     info: &Info,
     now: i64,
-    battery_mv: Option<u32>,
-    room_c: Option<f32>,
+    r: Readings,
     (n, total): (u8, u8),
+    sync_failed: bool,
 ) -> FrameBuffer {
     draw_photo_counter(&mut fb, n, total);
     let (today, secs) = tz::to_local(now);
@@ -442,11 +479,12 @@ pub fn compose(
         &EventsInfo {
             date: &today.label(),
             status: &status,
-            room_c,
-            battery_pct: battery_mv.map(battery::percent),
+            room_c: r.room_c,
+            battery_pct: r.battery_mv.map(battery::percent),
             events: agenda.events.as_deref(),
             tomorrow: agenda.tomorrow,
             sun,
+            sync_failed,
         },
         backdrop,
     );
@@ -476,9 +514,17 @@ mod tests {
         screens: HashMap<u8, FrameBuffer>,
         info: Option<Info>,
         shown: Vec<Option<u8>>,
+        /// Per refresh: was the crossed-out Wi-Fi icon on it?
+        no_wifi: Vec<bool>,
         beeps: Vec<&'static str>,
         online_calls: Vec<u8>,
         offline: bool,
+        /// Online, but the weather did not come.
+        weather_down: bool,
+        /// Online, but this many photos of the batch did not come.
+        photos_lost: u8,
+        /// Online, but the device reports these parts missing.
+        missing: Vec<&'static str>,
         /// Marker of the first screen of the next batch.
         next_batch: u8,
         saved: Option<State>,
@@ -505,6 +551,7 @@ mod tests {
         }
         fn show(&mut self, fb: FrameBuffer) -> Result<()> {
             self.shown.push(marker(&fb));
+            self.no_wifi.push(no_wifi_icon(&fb));
             Ok(())
         }
         fn load_screen(&mut self, slot: u8) -> Option<FrameBuffer> {
@@ -534,11 +581,24 @@ mod tests {
             let first = self.next_batch;
             Ok(Online {
                 now: now.unwrap_or(T0),
-                forecast: None,
+                forecast: (!self.weather_down).then(forecast),
                 events: Some((vec![], vec![])),
-                batch: (0..batch).map(|i| screen(first + i)).collect(),
+                batch: (0..batch.saturating_sub(self.photos_lost)).map(|i| screen(first + i)).collect(),
+                missing: self.missing.clone(),
             })
         }
+    }
+
+    /// A forecast without hours or sun times (nothing red on the screen).
+    fn forecast() -> Forecast {
+        Forecast { now: "10:00".into(), utc_offset_secs: 7200, start_unix: T0, slots: vec![], sun: vec![] }
+    }
+
+    /// The crossed-out Wi-Fi icon is the only red in the events box header here.
+    fn no_wifi_icon(fb: &FrameBuffer) -> bool {
+        let r = events_rect();
+        let (x0, y0) = (r.top_left.x as u32, r.top_left.y as u32);
+        (y0..y0 + 22).any(|y| (x0..x0 + r.size.width).any(|x| fb.get(x, y) == Ink::Red))
     }
 
     /// 2026-11-25 10:00 Israel time.
@@ -762,5 +822,74 @@ mod tests {
         assert_eq!(next_day.tomorrow, None);
         let later = fresh_info(T0 + 2 * 86_400, None, None, Some(stored));
         assert_eq!(later.events, None, "nothing known about this day");
+    }
+
+    #[test]
+    fn failed_sync_redraws_the_current_photo_with_a_crossed_out_wifi_icon() {
+        let (mut dev, mut st) = stocked(3);
+        st.current = 1;
+        dev.offline = true;
+        // stored info is old: the timer wake needs Wi-Fi
+        run(&mut dev, &mut st, &cfg(), Wake::Timer, at(T0 + 9 * 3600));
+        assert_eq!(dev.shown, vec![Some(1)], "the photo that was on the panel");
+        assert_eq!(dev.no_wifi, vec![true]);
+        assert!(st.sync_failed);
+        assert_eq!((st.attempt, st.last_refresh), (1, Some(T0 + 9 * 3600)));
+        assert_eq!(dev.beeps, vec!["error"]);
+    }
+
+    #[test]
+    fn failed_sync_with_nothing_stored_shows_nothing() {
+        let mut dev = Fake { offline: true, ..Fake::default() };
+        let mut st = State::default();
+        run(&mut dev, &mut st, &cfg(), Wake::PowerOn, at(T0));
+        assert!(dev.shown.is_empty());
+        assert!(st.sync_failed);
+    }
+
+    #[test]
+    fn the_icon_stays_while_browsing_and_goes_after_a_good_sync() {
+        let (mut dev, mut st) = stocked(3);
+        dev.offline = true;
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0 + 600));
+        dev.offline = false;
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0 + 1200));
+        assert_eq!(dev.no_wifi, vec![true, true, false]);
+        assert!(!st.sync_failed);
+    }
+
+    #[test]
+    fn a_good_sync_shows_no_icon() {
+        let (mut dev, mut st) = stocked(3);
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
+        assert_eq!(dev.no_wifi, vec![false]);
+        assert!(!st.sync_failed);
+    }
+
+    #[test]
+    fn a_partly_failed_sync_shows_the_new_photo_with_the_icon() {
+        for (weather_down, missing) in [(true, vec![]), (false, vec!["calendar 2 of 2"])] {
+            let (mut dev, mut st) = stocked(3);
+            dev.next_batch = 10;
+            dev.weather_down = weather_down;
+            dev.missing = missing;
+            run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
+            assert_eq!(dev.shown, vec![Some(10)]);
+            assert_eq!(dev.no_wifi, vec![true]);
+            assert!(st.sync_failed);
+            assert_eq!(st.attempt, 0, "not a failed update: no retry");
+        }
+    }
+
+    #[test]
+    fn fewer_photos_than_asked_for_count_as_a_partly_failed_sync() {
+        let (mut dev, mut st) = stocked(3);
+        dev.next_batch = 10;
+        dev.photos_lost = 1;
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Update), at(T0));
+        assert_eq!(dev.shown, vec![Some(10)]);
+        assert_eq!(dev.no_wifi, vec![true]);
+        assert_eq!(st.stock_count, 2);
     }
 }

@@ -190,6 +190,10 @@ make flash FEATURES=bars          # test build: six colour bars only
   day) shows a stored photo without Wi-Fi (~1.6 s awake). Older data is
   fetched again; when all stored photos were seen, a new batch is downloaded.
 - **Battery**: a refresh is skipped below 3.45 V (no half-drawn screens).
+- **Failed sync**: if a sync fails for any reason (no Wi-Fi, or the weather, a
+  calendar or photos did not come), the screen shows a red-struck Wi-Fi icon
+  left of the time, with the last stored photo, weather and events. It stays
+  until a sync gets everything; a failed update retries in 30 min (3 times).
 
 ## How it works
 

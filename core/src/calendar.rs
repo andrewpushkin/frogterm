@@ -19,6 +19,9 @@ pub struct DayEvent {
     pub title: String,
 }
 
+/// Today's and tomorrow's events.
+pub type TwoDays = (Vec<DayEvent>, Vec<DayEvent>);
+
 /// Streaming reader of one iCal file, collecting the events of `day` (local).
 pub struct IcsScanner {
     day: Date,
