@@ -198,8 +198,9 @@ make flash FEATURES=bars          # test build: six colour bars only
 ## How it works
 
 - `core/` — everything testable on a PC that also runs on the ESP32: Google
-  album reading, dithering to the six inks, layout and fonts (Latin, Cyrillic,
-  Hebrew right-to-left), weather, iCal calendar, Israel time zone, schedule,
+  album reading, dithering to the six inks, layout and fonts (event titles in
+  Rubik SemiBold — Latin, Cyrillic and Hebrew right-to-left — rasterized to 1 bit
+  at build time by `core/build.rs`), weather, iCal calendar, Israel time zone, schedule,
   panel protocol, and what one wake does (`app.rs`, behind a `Device` trait).
 - `pc/` — the emulator (a PC `Device` in a window) and the album check.
 - `firmware/` — the reTerminal `Device`, with `esp-idf-svc`: e-paper on
@@ -216,6 +217,8 @@ calendar go to wear-levelled NVS, the album list weekly — far below the
 - ED2208 panel init sequence: Zephyr `drivers/display/display_ed2208_gca.c`
   (Apache-2.0), matching Seeed_GFX.
 - Battery voltage-to-percent table: Seeed's reTerminal E-series ESPHome cookbook.
+- Font: [Rubik](https://github.com/googlefonts/rubik) (SIL Open Font License,
+  `core/fonts/OFL.txt`).
 
 ## License
 

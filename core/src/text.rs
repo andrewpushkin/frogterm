@@ -3,17 +3,37 @@
 //! Titles look like "Иврит / Язык (שפה) - учитель" or "תור טלפוני לד\"ר".
 //! The panel has no text shaping, so we do a small subset of the Unicode bidi
 //! algorithm: split into runs, put them in visual (left-to-right drawing) order,
-//! reverse Hebrew runs, and draw each run with a font that has its glyphs.
+//! and reverse Hebrew runs.
+//!
+//! The font is Rubik SemiBold (Latin, Cyrillic and Hebrew in one design),
+//! rasterized to 1 bit at build time (`build.rs`).
 
 use embedded_graphics::prelude::*;
-use u8g2_fonts::fonts;
-use u8g2_fonts::types::{FontColor, VerticalPosition};
-use u8g2_fonts::FontRenderer;
 
 use crate::framebuf::Ink;
 
-static LATIN_CYRILLIC: FontRenderer = FontRenderer::new::<fonts::u8g2_font_cu12_t_cyrillic>();
-static HEBREW: FontRenderer = FontRenderer::new::<fonts::u8g2_font_cu12_t_hebrew>();
+/// One glyph of the build-time font table.
+struct Glyph {
+    ch: char,
+    /// Pen advance in pixels.
+    advance: i32,
+    /// Bitmap offset from the pen position / line top.
+    x: i32,
+    y: i32,
+    w: usize,
+    h: usize,
+    /// Start of the bitmap in `BITS` (row-major, MSB first).
+    bits: usize,
+}
+
+mod font {
+    use super::Glyph;
+    include!(concat!(env!("OUT_DIR"), "/font.rs"));
+}
+
+fn glyph(ch: char) -> Option<&'static Glyph> {
+    font::GLYPHS.binary_search_by_key(&ch, |g| g.ch).ok().map(|i| &font::GLYPHS[i])
+}
 
 /// A piece of text in drawing order, and whether it needs the Hebrew font.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,42 +109,33 @@ fn classify(ch: char) -> Class {
     }
 }
 
-/// Bold: every glyph is drawn twice, 1 px apart, and letters get 1 px more
-/// room so they don't run together. (There is no bold font with both
-/// Cyrillic and Hebrew at this size.)
-const BOLD: i32 = 1;
-
-/// Draws `text` in bold with its top-left at `pos`; returns the drawn width
-/// in pixels. Characters missing from both fonts are skipped.
+/// Draws `text` with its top-left at `pos`; returns the drawn width in
+/// pixels. Characters missing from the font are skipped.
 pub fn draw_mixed<D: DrawTarget<Color = Ink>>(target: &mut D, text: &str, pos: Point, ink: Ink) -> i32 {
-    layout_glyphs(text, |font, s, x| {
-        for dx in 0..=BOLD {
-            let at = pos + Point::new(x + dx, 0);
-            font.render(s, at, VerticalPosition::Top, FontColor::Transparent(ink), target).ok()?;
-        }
-        Some(())
+    layout_glyphs(text, |g, x| {
+        let origin = pos + Point::new(x + g.x, g.y);
+        let pixels = (0..g.h).flat_map(move |row| (0..g.w).map(move |col| (row, col))).filter_map(move |(row, col)| {
+            let bit = row * g.w + col;
+            let on = font::BITS[g.bits + bit / 8] & (0x80 >> (bit % 8)) != 0;
+            on.then(|| Pixel(origin + Point::new(col as i32, row as i32), ink))
+        });
+        let _ = target.draw_iter(pixels);
     })
 }
 
 /// Width `draw_mixed` would draw, without drawing (for right alignment).
 pub fn mixed_width(text: &str) -> i32 {
-    layout_glyphs(text, |_, _, _| Some(()))
+    layout_glyphs(text, |_, _| {})
 }
 
-/// Walks the characters of `text` in visual order with their font and x
-/// offset, calling `draw` for each; returns the total width. A character
-/// `draw` fails on (missing glyph) takes no room.
-fn layout_glyphs(text: &str, mut draw: impl FnMut(&FontRenderer, &str, i32) -> Option<()>) -> i32 {
+/// Walks the glyphs of `text` in visual order with their x offset, calling
+/// `draw` for each; returns the total width.
+fn layout_glyphs(text: &str, mut draw: impl FnMut(&Glyph, i32)) -> i32 {
     let mut x = 0;
-    let mut buf = [0u8; 4];
     for run in visual_runs(text) {
-        let font = if run.hebrew { &HEBREW } else { &LATIN_CYRILLIC };
-        for ch in run.text.chars() {
-            let s: &str = ch.encode_utf8(&mut buf);
-            let Ok(d) = font.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Top) else { continue };
-            if draw(font, s, x).is_some() {
-                x += d.advance.x + BOLD;
-            }
+        for g in run.text.chars().filter_map(glyph) {
+            draw(g, x);
+            x += g.advance;
         }
     }
     x
