@@ -65,7 +65,8 @@ monitor:
 image: build/.image-stamp
 
 build/.image-stamp: Dockerfile
-	docker buildx build --load -q -t $(IMAGE) . >/dev/null
+	GITHUB_TOKEN="$$(gh auth token 2>/dev/null)" \
+		docker buildx build --load -q --secret id=github_token,env=GITHUB_TOKEN -t $(IMAGE) . >/dev/null
 	@mkdir -p build && touch $@
 
 tests: image

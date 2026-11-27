@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # frogterm development image: everything needed to build, test and run the project,
 # including the ESP32-S3 firmware. The host only needs Docker, make and usbipd-win.
 #
@@ -27,7 +28,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
  && rustc --version && cargo --version
 
 # ESP32-S3 Rust tools: Xtensa toolchain ("esp"), flasher, linker proxy.
-RUN cargo install --locked espup@0.19.0 espflash@4.7.0 ldproxy@0.3.5 \
+# espup asks the GitHub API for the toolchain release; the optional build secret
+# github_token (the Makefile passes `gh auth token`) avoids its rate limit.
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN \
+    cargo install --locked espup@0.19.0 espflash@4.7.0 ldproxy@0.3.5 \
  && espup install --targets esp32s3 --export-file /opt/export-esp.sh \
  && rm -rf /opt/rust/cargo/registry /opt/rust/cargo/git
 

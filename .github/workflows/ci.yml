@@ -71,7 +71,9 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Build and push
         if: steps.exists.outputs.found != 'true'
-        run: docker buildx build --push -t "${{ steps.ref.outputs.ref }}" .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # for espup's GitHub API calls
+        run: docker buildx build --push --secret id=github_token,env=GITHUB_TOKEN -t "${{ steps.ref.outputs.ref }}" .
 
   firmware:
     name: firmware build
