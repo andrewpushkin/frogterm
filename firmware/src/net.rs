@@ -55,14 +55,20 @@ impl Net {
         };
         log::info!("joining Wi-Fi {}", if last_ap.is_some() { "on the remembered channel" } else { "with a full scan" });
         wifi.set_configuration(&config(last_ap)?)?;
+        allow_wpa3_h2e()?;
         wifi.start()?;
         if let Err(e) = wifi.connect() {
             if last_ap.is_none() {
+                log_visible_aps(&mut wifi, ssid);
                 return Err(e).context("Wi-Fi connect");
             }
             log::warn!("quick join failed ({e}), scanning all channels");
             wifi.set_configuration(&config(None)?)?;
-            wifi.connect().context("Wi-Fi connect")?;
+            allow_wpa3_h2e()?;
+            if let Err(e) = wifi.connect() {
+                log_visible_aps(&mut wifi, ssid);
+                return Err(e).context("Wi-Fi connect");
+            }
         }
         wifi.wait_netif_up().context("Wi-Fi DHCP")?;
         let joined = wifi.wifi().get_ap_info().ok().map(|ap| (ap.bssid, ap.channel));
@@ -97,6 +103,44 @@ impl Net {
         drop(self.sntp.take());
         let _ = self.wifi.disconnect();
         let _ = self.wifi.stop();
+    }
+}
+
+/// WPA3 routers may demand the hash-to-element (H2E) SAE handshake.
+/// esp-idf-svc zero-fills the station config, i.e. `WPA3_SAE_PWE_UNSPECIFIED`,
+/// so set "both" (H2E or hunt-and-peck, as the router offers) on the raw config.
+fn allow_wpa3_h2e() -> Result<()> {
+    use esp_idf_svc::sys::{esp, esp_wifi_get_config, esp_wifi_set_config, wifi_config_t, wifi_interface_t_WIFI_IF_STA};
+    let mut c: wifi_config_t = Default::default();
+    // SAFETY: the driver fills/reads a plain C struct; the STA variant is the one in use
+    unsafe {
+        esp!(esp_wifi_get_config(wifi_interface_t_WIFI_IF_STA, &mut c))?;
+        c.sta.sae_pwe_h2e = esp_idf_svc::sys::wifi_sae_pwe_method_t_WPA3_SAE_PWE_BOTH;
+        esp!(esp_wifi_set_config(wifi_interface_t_WIFI_IF_STA, &mut c))?;
+    }
+    Ok(())
+}
+
+/// After a failed join: what the radio can see, to tell "no signal" from
+/// "router found but refused" (e.g. a security mode the device lacks).
+fn log_visible_aps(wifi: &mut BlockingWifi<EspWifi<'static>>, ssid: &str) {
+    match wifi.scan() {
+        Ok(mut aps) => {
+            aps.sort_by_key(|a| std::cmp::Reverse(a.signal_strength));
+            let ours = aps.iter().filter(|a| a.ssid.as_str() == ssid).count();
+            log::warn!("Wi-Fi scan: {} networks, {ours} named {ssid:?}", aps.len());
+            for a in aps.iter().take(12) {
+                log::warn!(
+                    "  {:<24} ch {:>2} {:>4} dBm {:?}{}",
+                    a.ssid.as_str(),
+                    a.channel,
+                    a.signal_strength,
+                    a.auth_method,
+                    if a.ssid.as_str() == ssid { "  <- ours" } else { "" }
+                );
+            }
+        }
+        Err(e) => log::warn!("Wi-Fi scan failed: {e}"),
     }
 }
 
