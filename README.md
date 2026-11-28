@@ -169,16 +169,20 @@ cargo run --release -p frogterm-pc -- emulator
 ## Releases
 
 Every push to `main` is a release: its number is the count of commits on
-`main` (tag `v85` for the 85th). Each release has `firmware.bin` (an update,
-written at `0x10000`: the device keeps its settings) and `firmware-full.bin`
-(a first install at `0x0`: bootloader, partition table and app; it erases
-the settings). Neither contains anyone's settings: the device starts in
-settings mode. The same push deploys the [GitHub Pages site](https://andrewpushkin.github.io/frogterm/)
+`main` (tag `v85` for the 85th). Each release has `firmware.bin` (an update:
+upload it on the device's settings page, see "Firmware update"; the device
+keeps its settings) and `firmware-full.bin` (a first install at `0x0`:
+bootloader, partition table and app; it erases the settings). Neither
+contains anyone's settings: a new device starts in settings mode. The same
+push deploys the [GitHub Pages site](https://andrewpushkin.github.io/frogterm/)
 (`site/`) with a browser installer for that release.
 
+By hand with espflash (`erase-region` clears the record of an update
+installed from the page, so the firmware just written is the one that runs):
+
 ```sh
-espflash write-bin 0x10000 firmware.bin        # update
-espflash write-bin 0x0 firmware-full.bin       # first install
+espflash write-bin 0x0 firmware-full.bin && espflash erase-region 0xa10000 0x2000   # first install
+espflash write-bin 0x10000 firmware.bin && espflash erase-region 0xa10000 0x2000    # update over USB
 ```
 
 ## Build and flash
@@ -228,6 +232,23 @@ button is down: holding green or right for 10 s opens settings mode (below).
   then sleeps until a button is pressed.
 - A device without settings starts in settings mode (own Wi-Fi) whenever a
   button wakes it.
+
+### Firmware update
+
+In settings mode the page also has a **Firmware** box: it shows the running
+version; choose `firmware.bin` of a [release](https://github.com/andrewpushkin/frogterm/releases)
+(download it before joining `frogterm-setup`, which has no internet) and
+press **Install**. The device checks the file while it arrives (a whole
+ESP32-S3 frogterm firmware, not `firmware-full.bin`), writes it next to the
+running one, leaves settings mode and starts it; settings and stored photos
+stay. If the new firmware crashes or hangs before its first normal sleep,
+the device goes back to the previous one by itself at the next restart.
+
+The device needs **one USB flash** of a firmware with this feature first
+(it brings the flash layout with the update slots and the bootloader that
+can roll back); until then the page says so. Flash layout: `factory`,
+`photos`, `screens` as before, then `otadata`, `ota_0`, `ota_1` (3 MB each)
+in the space that was free.
 
 | Sound | Meaning |
 |---|---|

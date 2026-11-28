@@ -92,10 +92,14 @@
       <p class="muted" style="margin-top:.6rem">Updating keeps the device's settings, unless you choose to erase the device when asked.</p>
     </div>
     <div class="card">
+      <h3>From the frame's settings page</h3>
+      <p>Once frogterm runs on the frame, later versions need no cable: download <code>firmware.bin</code> from the <a href="https://github.com/{{REPO}}/releases/latest">latest release</a>, open the frame's settings page (hold green 10 s) and install it in the <em>Firmware</em> box. Settings and photos stay; a version that fails is rolled back by itself.</p>
+    </div>
+    <div class="card">
       <h3>With espflash</h3>
       <p>Download from the <a href="https://github.com/{{REPO}}/releases/latest">latest release</a>:</p>
-<pre>espflash write-bin 0x0 firmware-full.bin      # first install (erases the settings)
-espflash write-bin 0x10000 firmware.bin       # update (keeps the settings)</pre>
+<pre>espflash write-bin 0x0 firmware-full.bin && espflash erase-region 0xa10000 0x2000   # first install (erases the settings)
+espflash write-bin 0x10000 firmware.bin && espflash erase-region 0xa10000 0x2000    # update (keeps the settings)</pre>
     </div>
   </div>
 
