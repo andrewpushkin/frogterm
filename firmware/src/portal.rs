@@ -64,6 +64,12 @@ impl Portal {
             }
             _ => (Network::AccessPoint(access_point(modem, sysloop, nvs.clone())?), app::AP_SSID.to_string(), app::AP_ADDRESS.to_string()),
         };
+        // a server answers at once: no Wi-Fi power saving (the radio would
+        // doze between beacons and miss ARP requests and connections)
+        // SAFETY: plain ESP-IDF call on the running Wi-Fi
+        if unsafe { esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE) } != esp_idf_svc::sys::ESP_OK {
+            log::warn!("settings mode: Wi-Fi power saving stays on");
+        }
         let last_request = Arc::new(AtomicU32::new(now_ms()));
         let installed = Arc::new(AtomicBool::new(false));
         let server = serve(nvs, last_request.clone(), installed.clone())?;
