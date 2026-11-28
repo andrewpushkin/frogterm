@@ -17,7 +17,8 @@ static VERSION_TAG: &str = concat!("<frogterm-version:", env!("FT_VERSION"), ">"
 /// it was rolled back).
 const TRIED_KEY: &str = "fw_tried";
 
-/// This firmware's version (`FT_VERSION`: commits on main, or "dev").
+/// This firmware's version (`FT_VERSION`: commits pushed to GitHub, or
+/// "dev" for a plain cargo build).
 pub fn version() -> &'static str {
     let tag = core::hint::black_box(VERSION_TAG);
     tag.trim_start_matches("<frogterm-version:").trim_end_matches('>')
@@ -170,7 +171,7 @@ pub fn restart() -> ! {
 fn update_from_site(net: &mut Net, nvs: &EspNvs<NvsDefault>) -> Result<Option<String>> {
     let running = version();
     if running.parse::<u32>().is_err() {
-        log::info!("firmware {running} is a local build: no automatic update");
+        log::info!("firmware {running} has no release number: no automatic update");
         return Ok(None);
     }
     let mut text = Vec::new();

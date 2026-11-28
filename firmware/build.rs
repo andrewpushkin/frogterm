@@ -6,7 +6,8 @@
 
 fn main() -> anyhow::Result<()> {
     embuild::espidf::sysenv::output();
-    // the release number (commits on main), set by CI; local builds are "dev"
+    // the version: commits pushed to GitHub (origin/main), set by the Makefile
+    // and CI; "dev" only for a cargo build without it
     println!("cargo:rerun-if-env-changed=FT_VERSION");
     let version = std::env::var("FT_VERSION").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "dev".into());
     println!("cargo:rustc-env=FT_VERSION={version}");

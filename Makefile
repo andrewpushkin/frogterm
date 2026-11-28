@@ -21,8 +21,9 @@ DOCKER_X11 := $(DOCKER_RUN) --network host -e DISPLAY=$(DISPLAY) -v /tmp/.X11-un
 PC := cargo run --release -q -p frogterm-pc --
 
 FEATURES     ?=
-# Release number baked into the firmware (CI: commits on main)
-FT_VERSION   ?= dev
+# The firmware's version, baked into firmware.bin: the count of commits
+# pushed to GitHub (origin/main), as CI numbers the releases
+FT_VERSION   ?= $(shell git rev-list --count origin/main 2>/dev/null || echo dev)
 ELF          := build/target/xtensa-esp32s3-espidf/release/frogterm
 # The bootloader ESP-IDF builds with sdkconfig.defaults (rollback of a failed
 # update on), not espflash's own; the newest one of the builds

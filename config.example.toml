@@ -65,5 +65,5 @@ wifi_password = "your-wifi-password"
 
 # Every sync checks for a newer frogterm release (GitHub); a new one is
 # installed and the frame restarts with it at once (and syncs), and one that
-# does not work is rolled back by itself. Only release firmware updates itself (a local build stays). Default true.
+# does not work is rolled back by itself. It only moves up to a higher version. Default true.
 # auto_update = true

@@ -221,9 +221,13 @@ make send BUTTON=next               # a press now (the device is awake)
 make log SECS=120                   # the log, no reset
 ```
 
-To see an automatic update: flash a release number (`make flash FT_VERSION=98`
-while release 98 is the newest), push one more commit to `main`, wait for its
-release (`curl https://andrewpushkin.github.io/frogterm/version.txt`), then
+The firmware's version is baked into it: the count of commits pushed to
+GitHub (`origin/main`), the same number CI gives the release of those
+commits. So a local `make flash` of the pushed `main` is "frogterm 98" when
+release 98 is the newest (`FT_VERSION=` overrides it).
+
+To see an automatic update: `make flash` (version 98, the newest release),
+push one more commit to `main`, wait for its release (`curl https://andrewpushkin.github.io/frogterm/version.txt`), then
 `make press BUTTON=green`: the log shows "release 99 is out … installing",
 the restart and "frogterm 99 woke by PowerOn".
 
@@ -271,9 +275,8 @@ every sync also reads the release number on the [project site](https://andrewpus
 (one small request) and, when a newer release is out, downloads its
 `firmware.bin` and installs it the same way, then restarts with it at once;
 the new firmware does that sync itself (a full one). A release that was
-rolled back is not installed again (the next one is). Only
-a release updates itself: a firmware built and flashed locally (version
-`dev`) never is replaced by one.
+rolled back is not installed again (the next one is). A firmware updates itself only to a higher number than its own (its version
+is the count of commits pushed to GitHub, see "Testing over the serial port").
 
 The device needs **one USB flash** of a firmware with this feature first
 (it brings the flash layout with the update slots and the bootloader that

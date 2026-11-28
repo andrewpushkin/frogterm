@@ -182,6 +182,7 @@ first, the firmware follows.
   than the running one, installs that release's `firmware.bin` from the same
   site, then restarts into it at once (owner); the new firmware does that
   sync itself, as a full sync (after the panel's rest if one is running). My calls: the Pages site, not the GitHub
-  API (no rate limit, the files of one CI run); only a release updates itself
-  (a local "dev" build stays); a release that was installed and rolled back
+  API (no rate limit, the files of one CI run); the version baked into every
+  firmware is the count of commits pushed to GitHub (owner; local builds
+  too, so they update like releases); one without a number stays; a release that was installed and rolled back
   is not installed again.
