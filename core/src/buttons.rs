@@ -53,6 +53,68 @@ impl NewPresses {
     }
 }
 
+/// Green or right held this long: settings mode, at once (still held).
+pub const HOLD_MS: u64 = 10_000;
+/// Left still down after this long (stuck, or something lying on it) counts
+/// as let go.
+pub const STUCK_MS: u64 = 60_000;
+
+/// What a button did. Every button acts on release; the one thing that
+/// happens while a button is down is a `Hold` (green or right, 10 s).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gesture {
+    /// Pressed and let go (before the hold time).
+    Press(Press),
+    /// Held `HOLD_MS`: green or right only.
+    Hold(Press),
+}
+
+/// Presses and holds from the buttons' levels (in `ALL` order), polled
+/// again and again with a millisecond clock.
+pub struct Holds {
+    /// Since when each button is down.
+    since: [Option<u64>; 3],
+    /// Its gesture already came (a hold): its release does nothing.
+    done: [bool; 3],
+}
+
+impl Holds {
+    /// Buttons down now count as pressed now (the press that woke the chip).
+    pub fn new(down: [bool; 3], now_ms: u64) -> Holds {
+        Holds { since: down.map(|d| d.then_some(now_ms)), done: [false; 3] }
+    }
+
+    /// The gesture since the last poll, if any.
+    pub fn poll(&mut self, down: [bool; 3], now_ms: u64) -> Option<Gesture> {
+        // one gesture per poll; a second button's change waits for the next one
+        for (i, &is_down) in down.iter().enumerate() {
+            let p = ALL[i].0;
+            match (is_down, self.since[i]) {
+                (true, None) => self.since[i] = Some(now_ms),
+                (true, Some(t)) if !self.done[i] => {
+                    let held = now_ms.saturating_sub(t);
+                    let gesture = match p {
+                        Press::Update | Press::Next if held >= HOLD_MS => Gesture::Hold(p),
+                        Press::Previous if held >= STUCK_MS => Gesture::Press(p),
+                        _ => continue,
+                    };
+                    self.done[i] = true;
+                    return Some(gesture);
+                }
+                (true, Some(_)) => {}
+                (false, Some(_)) => {
+                    self.since[i] = None;
+                    if !std::mem::take(&mut self.done[i]) {
+                        return Some(Gesture::Press(p));
+                    }
+                }
+                (false, None) => {}
+            }
+        }
+        None
+    }
+}
+
 /// Which button woke the chip, from the ext1 wake-up GPIO mask.
 pub fn press_from_pins(mask: u64) -> Option<Press> {
     let pressed = |gpio: u32| mask & (1 << gpio) != 0;
@@ -124,5 +186,80 @@ mod tests {
         assert_eq!(browse(0, 0, Press::Next), None, "nothing stored");
         assert_eq!(browse(15, 10, Press::Next), Some(0), "stale index after a smaller batch");
         assert_eq!(browse(4, 10, Press::Update), None, "not a browse button");
+    }
+
+    /// Levels in `ALL` order: green, next (right), previous (left).
+    const NONE: [bool; 3] = [false, false, false];
+    const GREEN: [bool; 3] = [true, false, false];
+    const RIGHT: [bool; 3] = [false, true, false];
+    const LEFT: [bool; 3] = [false, false, true];
+
+    #[test]
+    fn a_press_counts_on_release() {
+        let mut h = Holds::new(NONE, 0);
+        assert_eq!(h.poll(RIGHT, 100), None, "nothing while down");
+        assert_eq!(h.poll(RIGHT, 3000), None);
+        assert_eq!(h.poll(NONE, 3020), Some(Gesture::Press(Press::Next)));
+        assert_eq!(h.poll(NONE, 3040), None, "once");
+        assert_eq!(h.poll(GREEN, 4000), None);
+        assert_eq!(h.poll(NONE, 4000 + HOLD_MS - 1), Some(Gesture::Press(Press::Update)), "just short of the hold");
+    }
+
+    #[test]
+    fn green_or_right_held_10_s_is_a_hold_at_once() {
+        for (levels, p) in [(GREEN, Press::Update), (RIGHT, Press::Next)] {
+            let mut h = Holds::new(NONE, 0);
+            assert_eq!(h.poll(levels, 1000), None);
+            assert_eq!(h.poll(levels, 1000 + HOLD_MS - 1), None);
+            assert_eq!(h.poll(levels, 1000 + HOLD_MS), Some(Gesture::Hold(p)), "still down");
+        }
+        assert_eq!(HOLD_MS, 10_000);
+    }
+
+    #[test]
+    fn the_release_after_a_hold_does_nothing() {
+        let mut h = Holds::new(NONE, 0);
+        h.poll(GREEN, 0);
+        assert_eq!(h.poll(GREEN, HOLD_MS), Some(Gesture::Hold(Press::Update)));
+        assert_eq!(h.poll(GREEN, HOLD_MS + 5000), None, "not again");
+        assert_eq!(h.poll(NONE, HOLD_MS + 6000), None, "the release does nothing");
+        assert_eq!(h.poll(GREEN, HOLD_MS + 7000), None);
+        assert_eq!(h.poll(NONE, HOLD_MS + 7100), Some(Gesture::Press(Press::Update)), "the next press is a press again");
+    }
+
+    #[test]
+    fn left_held_long_is_a_press_on_release() {
+        let mut h = Holds::new(NONE, 0);
+        h.poll(LEFT, 0);
+        assert_eq!(h.poll(LEFT, 20_000), None, "no hold for left");
+        assert_eq!(h.poll(NONE, 20_100), Some(Gesture::Press(Press::Previous)));
+    }
+
+    #[test]
+    fn left_stuck_60_s_counts_as_released() {
+        let mut h = Holds::new(NONE, 0);
+        h.poll(LEFT, 0);
+        assert_eq!(h.poll(LEFT, STUCK_MS - 1), None);
+        assert_eq!(h.poll(LEFT, STUCK_MS), Some(Gesture::Press(Press::Previous)));
+        assert_eq!(h.poll(NONE, STUCK_MS + 500), None, "the real release does nothing");
+        assert_eq!(STUCK_MS, 60_000);
+    }
+
+    #[test]
+    fn the_waking_button_is_pressed_from_the_start() {
+        let mut h = Holds::new(GREEN, 500);
+        assert_eq!(h.poll(GREEN, 600), None);
+        assert_eq!(h.poll(NONE, 700), Some(Gesture::Press(Press::Update)));
+        let mut h = Holds::new(RIGHT, 500);
+        assert_eq!(h.poll(RIGHT, 500 + HOLD_MS), Some(Gesture::Hold(Press::Next)));
+    }
+
+    #[test]
+    fn two_buttons_let_go_together_both_count() {
+        let mut h = Holds::new(NONE, 0);
+        h.poll([true, true, false], 0);
+        let a = h.poll(NONE, 100);
+        let b = h.poll(NONE, 120);
+        assert_eq!((a, b), (Some(Gesture::Press(Press::Update)), Some(Gesture::Press(Press::Next))));
     }
 }
