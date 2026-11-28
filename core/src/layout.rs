@@ -116,10 +116,7 @@ pub const HUMIDITY_NORMAL_PCT: std::ops::RangeInclusive<u8> = 50..=75;
 /// The tab's values, only those out of the ordinary: strong wind, low or
 /// high humidity (no precipitation: the box's columns show it already).
 pub fn details(slot: &HourSlot) -> Vec<Detail> {
-    let humidity = slot
-        .humidity_pct
-        .filter(|h| !HUMIDITY_NORMAL_PCT.contains(h))
-        .map(|h| Detail::Humidity(format!("{h}%")));
+    let humidity = slot.humidity_pct.filter(|h| !HUMIDITY_NORMAL_PCT.contains(h)).map(|h| Detail::Humidity(format!("{h}%")));
     let wind = slot.wind_kmh.filter(|&w| w >= WIND_STRONG_KMH).map(|w| Detail::Wind(format!("{} km/h", w.round() as i32)));
     humidity.into_iter().chain(wind).collect()
 }
@@ -318,7 +315,7 @@ pub fn weather_tab_rect(details: &[Detail]) -> Option<Rectangle> {
     if details.is_empty() {
         return None;
     }
-    let content: i32 = details.iter().map(|d| detail_parts(d)).map(|(icon, s)| icon + ICON_GAP + text_width(&SMALL_FONT, s)).sum();
+    let content: i32 = details.iter().map(detail_parts).map(|(icon, s)| icon + ICON_GAP + text_width(&SMALL_FONT, s)).sum();
     let w = 2 * TAB_PAD + content + DETAIL_GAP * (details.len() as i32 - 1);
     let b = weather_rect();
     let right = b.top_left.x + BOX_W as i32;
@@ -703,7 +700,17 @@ mod tests {
 
     #[test]
     fn rain_shows_only_above_zero_otherwise_high_uv() {
-        let s = |precip_pct, uv| HourSlot { hour: 12, temp_c: 30.0, precip_pct, uv, is_day: true, moon: 0.0, icon: Icon::Clear, humidity_pct: None, wind_kmh: None };
+        let s = |precip_pct, uv| HourSlot {
+            hour: 12,
+            temp_c: 30.0,
+            precip_pct,
+            uv,
+            is_day: true,
+            moon: 0.0,
+            icon: Icon::Clear,
+            humidity_pct: None,
+            wind_kmh: None,
+        };
         assert_eq!(rain_or_uv(&s(0, 2.0)), None, "no rain, low UV: empty");
         assert_eq!(rain_or_uv(&s(30, 2.0)), Some(("30%".into(), Ink::Blue)));
         assert_eq!(rain_or_uv(&s(0, 7.4)), Some(("UV 7".into(), Ink::Red)));
