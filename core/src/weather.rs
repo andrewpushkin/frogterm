@@ -38,6 +38,10 @@ pub struct HourSlot {
     /// Moon phase at this hour (0 new, 0.5 full).
     pub moon: f32,
     pub icon: Icon,
+    /// Relative humidity 0–100 (`None` in a forecast stored before it was fetched).
+    pub humidity_pct: Option<u8>,
+    /// Wind speed at 10 m, km/h (`None` likewise).
+    pub wind_kmh: Option<f32>,
 }
 
 /// Sunrise and sunset of one day (local times).
@@ -87,7 +91,7 @@ pub struct Place {
 pub fn forecast_url(latitude: f64, longitude: f64) -> String {
     format!(
         "https://api.open-meteo.com/v1/forecast?latitude={latitude:.4}&longitude={longitude:.4}\
-         &hourly=temperature_2m,precipitation_probability,weather_code,uv_index,is_day\
+         &hourly=temperature_2m,precipitation_probability,weather_code,uv_index,is_day,relative_humidity_2m,wind_speed_10m\
          &daily=sunrise,sunset\
          &current=temperature_2m&timezone=auto&forecast_hours={HOURS}"
     )
@@ -109,7 +113,9 @@ pub fn parse_forecast(json: &str) -> Result<Forecast> {
         let code = h["weather_code"][i].as_u64().and_then(|c| u16::try_from(c).ok()).unwrap_or(u16::MAX);
         let uv = h["uv_index"][i].as_f64().unwrap_or(0.0) as f32;
         let is_day = h["is_day"][i].as_u64() != Some(0);
-        slots.push(HourSlot { hour, temp_c, precip_pct, uv, is_day, moon: 0.0, icon: icon_for(code) });
+        let humidity_pct = h["relative_humidity_2m"][i].as_f64().map(|v| v.round().clamp(0.0, 100.0) as u8);
+        let wind_kmh = h["wind_speed_10m"][i].as_f64().map(|v| v as f32);
+        slots.push(HourSlot { hour, temp_c, precip_pct, uv, is_day, moon: 0.0, icon: icon_for(code), humidity_pct, wind_kmh });
     }
     if slots.is_empty() {
         bail!("forecast has no hours");
@@ -194,7 +200,9 @@ mod tests {
                   "precipitation_probability":[0,0,10,35,80,null,0],
                   "weather_code":[3,2,2,61,95,0,0],
                   "uv_index":[3.4,2.9,1.65,0.6,0.1,0.0,0.0],
-                  "is_day":[1,1,1,1,0,0,0]},
+                  "is_day":[1,1,1,1,0,0,0],
+                  "relative_humidity_2m":[61,64,null,70,75,80,82],
+                  "wind_speed_10m":[11.2,10.0,9.5,8.0,null,6.1,5.0]},
         "daily":{"time":["2026-11-25","2026-11-26"],
                  "sunrise":["2026-11-25T06:21","2026-11-26T06:22"],
                  "sunset":["2026-11-25T16:38","2026-11-26T16:38"]}}"#;
@@ -206,7 +214,7 @@ mod tests {
         for part in [
             "latitude=32.0853",
             "longitude=34.7818",
-            "hourly=temperature_2m,precipitation_probability,weather_code,uv_index,is_day",
+            "hourly=temperature_2m,precipitation_probability,weather_code,uv_index,is_day,relative_humidity_2m,wind_speed_10m",
             "daily=sunrise,sunset",
             "current=temperature_2m",
             "timezone=auto",
@@ -245,6 +253,8 @@ mod tests {
                 is_day: true,
                 moon: 0.0,
                 icon: Icon::Clear,
+                humidity_pct: None,
+                wind_kmh: None,
             })
             .collect();
         f
@@ -295,6 +305,14 @@ mod tests {
         let d = crate::date::Date { year: 2026, month: 11, day: 26 };
         assert_eq!(f.sun_on(d), Some(&SunDay { date: d, rise: (6, 22), set: (16, 38) }));
         assert_eq!(f.sun_on(crate::date::Date { year: 2026, month: 12, day: 1 }), None);
+    }
+
+    #[test]
+    fn humidity_and_wind_per_hour() {
+        let f = parse_forecast(FORECAST).unwrap();
+        assert_eq!((f.slots[0].humidity_pct, f.slots[0].wind_kmh), (Some(61), Some(11.2)));
+        assert_eq!(f.slots[2].humidity_pct, None, "null humidity is unknown");
+        assert_eq!(f.slots[4].wind_kmh, None, "null wind is unknown");
     }
 
     #[test]

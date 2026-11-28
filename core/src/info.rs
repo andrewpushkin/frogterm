@@ -6,12 +6,20 @@ use crate::date::Date;
 use crate::weather::{Forecast, HourSlot, Icon};
 
 /// Bump when the format gains fields, so data from older firmware is fetched again.
-const HEADER: &str = "frogterm-info v3";
+const HEADER: &str = "frogterm-info v4";
 const ICONS: [Icon; 9] =
     [Icon::Clear, Icon::PartlyCloudy, Icon::Cloudy, Icon::Fog, Icon::Drizzle, Icon::Rain, Icon::Showers, Icon::Thunder, Icon::Snow];
 
 fn hm(t: Option<(u8, u8)>) -> String {
     t.map_or("-".into(), |(h, m)| format!("{h:02}:{m:02}"))
+}
+
+/// `"-"` → `Some(None)`, a number → `Some(Some(n))`, garbage → `None`.
+fn optional<T: std::str::FromStr>(s: &str) -> Option<Option<T>> {
+    if s == "-" {
+        return Some(None);
+    }
+    s.parse().ok().map(Some)
 }
 
 fn parse_hm(s: &str) -> Option<Option<(u8, u8)>> {
@@ -57,14 +65,16 @@ impl Info {
                 for h in &f.slots {
                     let icon = ICONS.iter().position(|&i| i == h.icon).unwrap_or(2);
                     s.push_str(&format!(
-                        "h {} {} {} {} {} {} {}\n",
+                        "h {} {} {} {} {} {} {} {} {}\n",
                         h.hour,
                         h.temp_c,
                         h.precip_pct,
                         icon,
                         h.uv,
                         u8::from(h.is_day),
-                        h.moon
+                        h.moon,
+                        h.humidity_pct.map_or("-".into(), |v| v.to_string()),
+                        h.wind_kmh.map_or("-".into(), |v| v.to_string())
                     ));
                 }
                 for sd in &f.sun {
@@ -121,6 +131,8 @@ impl Info {
                         uv: f.next()?.parse().ok()?,
                         is_day: f.next()? == "1",
                         moon: f.next()?.parse().ok()?,
+                        humidity_pct: optional(f.next()?)?,
+                        wind_kmh: optional(f.next()?)?,
                     };
                     forecast.as_mut()?.slots.push(slot);
                 }
@@ -175,6 +187,8 @@ mod tests {
                         is_day: i < 4,
                         moon: 0.5 + i as f32 * 0.01,
                         icon,
+                        humidity_pct: (i != 1).then_some(60 + i as u8),
+                        wind_kmh: (i != 2).then_some(11.5 + i as f32),
                     })
                     .collect(),
                 sun: vec![crate::weather::SunDay { date: Date { year: 2026, month: 11, day: 25 }, rise: (6, 21), set: (16, 38) }],
@@ -203,11 +217,13 @@ mod tests {
 
     #[test]
     fn info_from_older_firmware_is_not_used() {
-        // v1 had no tomorrow's events, v2 no day/night or sun times: fetch again
+        // v1 had no tomorrow's events, v2 no day/night or sun times, v3 no
+        // humidity or wind: fetch again
         let v1 = "frogterm-info v1\nfetched 1795600000\ndate 2026-11-25\nforecast none\nevents 0\n";
         assert_eq!(Info::from_text(v1), None);
         assert_eq!(Info::from_text(&v1.replace("v1", "v2")), None);
-        assert!(info().to_text().starts_with("frogterm-info v3\n"));
+        assert_eq!(Info::from_text(&v1.replace("v1", "v3")), None);
+        assert!(info().to_text().starts_with("frogterm-info v4\n"));
     }
 
     #[test]

@@ -544,6 +544,8 @@ mod tests {
                 is_day: true,
                 moon: 0.0,
                 icon: Icon::Rain,
+                humidity_pct: Some(60 + i),
+                wind_kmh: Some(10.0 + f32::from(i)),
             })
             .collect()
     }
@@ -609,7 +611,7 @@ mod tests {
 
     #[test]
     fn rain_shows_only_above_zero_otherwise_high_uv() {
-        let s = |precip_pct, uv| HourSlot { hour: 12, temp_c: 30.0, precip_pct, uv, is_day: true, moon: 0.0, icon: Icon::Clear };
+        let s = |precip_pct, uv| HourSlot { hour: 12, temp_c: 30.0, precip_pct, uv, is_day: true, moon: 0.0, icon: Icon::Clear, humidity_pct: None, wind_kmh: None };
         assert_eq!(rain_or_uv(&s(0, 2.0)), None, "no rain, low UV: empty");
         assert_eq!(rain_or_uv(&s(30, 2.0)), Some(("30%".into(), Ink::Blue)));
         assert_eq!(rain_or_uv(&s(0, 7.4)), Some(("UV 7".into(), Ink::Red)));
