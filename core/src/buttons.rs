@@ -121,6 +121,34 @@ impl Holds {
     }
 }
 
+/// A line typed on the device's serial console (for testing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    /// `green`, `next` / `right`, `previous` / `left`: a press;
+    /// `hold green`, `hold next` / `hold right`: a 10-s hold.
+    Gesture(Gesture),
+    /// `version`: print the firmware's version.
+    Version,
+}
+
+/// The command a serial line asks for, if any.
+pub fn parse_command(line: &str) -> Option<Command> {
+    let button = |w: &str| match w {
+        "green" | "update" => Some(Press::Update),
+        "next" | "right" => Some(Press::Next),
+        "previous" | "prev" | "left" => Some(Press::Previous),
+        _ => None,
+    };
+    let line = line.trim().to_ascii_lowercase();
+    let words: Vec<&str> = line.split_whitespace().collect();
+    match words.as_slice() {
+        ["version"] => Some(Command::Version),
+        [b] => button(b).map(|p| Command::Gesture(Gesture::Press(p))),
+        ["hold", b] => button(b).filter(|p| *p != Press::Previous).map(|p| Command::Gesture(Gesture::Hold(p))),
+        _ => None,
+    }
+}
+
 /// Which button woke the chip, from the ext1 wake-up GPIO mask.
 pub fn press_from_pins(mask: u64) -> Option<Press> {
     let pressed = |gpio: u32| mask & (1 << gpio) != 0;
@@ -271,6 +299,21 @@ mod tests {
         let mut h = Holds::ignoring(NONE);
         h.poll(RIGHT, 0);
         assert_eq!(h.poll(RIGHT, HOLD_MS), Some(Gesture::Hold(Press::Next)));
+    }
+
+    #[test]
+    fn serial_commands_name_a_press_or_a_hold() {
+        assert_eq!(parse_command("green"), Some(Command::Gesture(Gesture::Press(Press::Update))));
+        assert_eq!(parse_command(" Next\r"), Some(Command::Gesture(Gesture::Press(Press::Next))));
+        assert_eq!(parse_command("right"), Some(Command::Gesture(Gesture::Press(Press::Next))));
+        assert_eq!(parse_command("left"), Some(Command::Gesture(Gesture::Press(Press::Previous))));
+        assert_eq!(parse_command("previous"), Some(Command::Gesture(Gesture::Press(Press::Previous))));
+        assert_eq!(parse_command("hold green"), Some(Command::Gesture(Gesture::Hold(Press::Update))));
+        assert_eq!(parse_command("hold  right"), Some(Command::Gesture(Gesture::Hold(Press::Next))));
+        assert_eq!(parse_command("hold left"), None, "left has no hold");
+        assert_eq!(parse_command("version"), Some(Command::Version));
+        assert_eq!(parse_command(""), None);
+        assert_eq!(parse_command("blue"), None);
     }
 
     #[test]

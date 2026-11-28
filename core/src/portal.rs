@@ -433,6 +433,7 @@ mod tests {
     fn the_page_shows_the_firmware_and_the_upload_box() {
         let (r, _) = handle("GET", "/", b"", FILE, &Host { wifi_needed: true, firmware: "85" });
         assert!(r.body.contains("frogterm 85"), "the running version");
+        assert!(r.body.contains("<p class=\"version\">Firmware: frogterm 85</p>"), "at the top, under the title");
         assert!(r.body.contains("type=\"file\"") && r.body.contains("/update"), "the upload box");
         let (r, _) = handle("GET", "/", b"", FILE, &Host { wifi_needed: false, firmware: "<x>" });
         assert!(r.body.contains("frogterm &lt;x&gt;"), "escaped");
