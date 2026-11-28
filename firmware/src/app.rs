@@ -27,11 +27,10 @@ use crate::settings::{host, settings, Settings};
 use crate::sleep::{button_held, deep_sleep, wake_cause};
 use crate::store::Store;
 
-/// Whole update must finish within this, or the device gives up and sleeps
-/// (300 s for the update, plus a button press waiting out the panel's rest).
 /// Sleep after a crash restart before trying again.
 const CRASH_PAUSE_SECS: u64 = 30 * 60;
-const WATCHDOG: Duration = Duration::from_secs(300 + schedule::PANEL_REST_SECS as u64);
+/// Whole update must finish within this, or the device gives up and sleeps.
+const WATCHDOG: Duration = Duration::from_secs(300);
 const MAX_PAGES: usize = 100;
 const ATTEMPTS: usize = 3;
 /// Stack of the download threads (TLS handshake needs ~10 KB).
@@ -65,6 +64,11 @@ impl Nvs {
             last_refresh: nvs.get_i64("refreshed")?,
             current: nvs.get_u8("current")?.unwrap_or(0),
             sync_failed: nvs.get_u8("sync_failed")? == Some(1),
+            ready_beep: match nvs.get_u8("ready_beep")? {
+                Some(1) => Some(true),
+                Some(2) => Some(false),
+                _ => None,
+            },
         };
         Ok((Nvs { nvs, last_ap }, state))
     }
@@ -77,6 +81,7 @@ impl Nvs {
         let _ = nvs.set_u32("seen", s.seen);
         let _ = nvs.set_u8("current", s.current);
         let _ = nvs.set_u8("sync_failed", u8::from(s.sync_failed));
+        let _ = nvs.set_u8("ready_beep", s.ready_beep.map_or(0, |ok| if ok { 1 } else { 2 }));
         if let Some(t) = s.last_refresh {
             let _ = nvs.set_i64("refreshed", t);
         }
@@ -146,10 +151,6 @@ impl Device for Reterminal<'_> {
         self.nvs.save(state);
     }
 
-    fn pause(&mut self, ms: u64) {
-        std::thread::sleep(Duration::from_millis(ms));
-    }
-
     fn go_online(&mut self, now: Option<i64>, batch: u8) -> Result<Online> {
         let tick = |step: &str| log::info!("progress: {step}");
         log_heap("before Wi-Fi");
@@ -208,7 +209,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
     if let Some(zone) = tz::Zone::parse(cfg.timezone) {
         tz::set_zone(zone);
     }
-    let (nvs, mut state) = Nvs::open(nvs_part.clone())?;
+    let (mut nvs, mut state) = Nvs::open(nvs_part.clone())?;
     let mut rtc = Rtc::new(p.i2c0, p.pins.gpio19, p.pins.gpio20)?;
     let rtc_now = rtc.read().unwrap_or_else(|e| {
         log::warn!("RTC read failed: {e:#}");
@@ -223,14 +224,19 @@ fn run_inner() -> Result<std::convert::Infallible> {
     let wake = wake_cause();
     log::info!("frogterm {} woke by {wake:?}, RTC {rtc_now:?}", env!("CARGO_PKG_VERSION"));
 
-    // woke early: straight back to sleep, before powering anything up
-    // (and the LED: off once the panel's rest after the last refresh is over)
-    if let Some(secs) = app::sleep_early(wake, rtc_now, &state) {
-        log::info!("woke {secs} s early");
-        let (led, secs) = app::led_while_asleep(rtc_now, &state, secs);
-        crate::board::set_led(led);
-        deep_sleep(secs, schedule::arm_button(button_held()));
+    // woke early: straight back to sleep, before powering anything up. At
+    // the end of the panel's rest: LED off and the final beep (ready)
+    if let Some(e) = app::early_wake(wake, rtc_now, &mut state) {
+        log::info!("woke early, sleeping {} s more", e.secs);
+        if let Some(tones) = e.beep {
+            crate::board::play(tones);
+            nvs.save(&state);
+        }
+        crate::board::set_led(e.led);
+        deep_sleep(e.secs, schedule::arm_button(button_held()));
     }
+    // busy from here on, until the panel's rest after this wake is over
+    crate::board::set_led(Led::On);
 
     let mut board = Board::new(p.pins.gpio21, p.pins.gpio16, p.pins.gpio14)?;
     crate::sleep::spawn_press_listener();

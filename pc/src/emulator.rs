@@ -211,9 +211,9 @@ impl Device for Emulated {
     fn beep(&mut self, tones: &[Tone]) {
         let sound = match tones {
             t if t == beep::PRESS => "chirp (press noticed)",
-            t if t == beep::WAIT => "pip-pip (wait, the panel is resting)",
-            t if t == beep::SUCCESS => "beep (done)",
-            t if t == beep::ERROR => "beep beep beep (failed)",
+            t if t == beep::BUSY => "pip-pip-pip (busy, press ignored)",
+            t if t == beep::SUCCESS => "beep (done, ready)",
+            t if t == beep::ERROR => "low beep beep beep (failed, ready)",
             _ => "beep",
         };
         log::info!("sound: {sound}");
@@ -228,8 +228,7 @@ impl Device for Emulated {
             "LED {}",
             match led {
                 Led::Off => "off (ready)",
-                Led::On => "on (the panel rests)",
-                Led::Blink => "blinking (working)",
+                Led::On => "on (busy)",
             }
         );
         self.ui.set_led(led);
@@ -270,10 +269,6 @@ impl Device for Emulated {
         if let Err(e) = fs::write(self.path("state.txt"), state_to_text(state)) {
             log::warn!("could not store the state: {e}");
         }
-    }
-
-    fn pause(&mut self, ms: u64) {
-        std::thread::sleep(Duration::from_millis(ms));
     }
 
     fn go_online(&mut self, now: Option<i64>, batch: u8) -> Result<Online> {
@@ -482,14 +477,15 @@ const STATE_HEADER: &str = "frogterm-state v1";
 /// The device's NVS state as text (out/state.txt).
 fn state_to_text(s: &State) -> String {
     format!(
-        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\ncurrent {}\nsync_failed {}\n",
+        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\ncurrent {}\nsync_failed {}\nready_beep {}\n",
         s.target,
         s.attempt,
         s.stock_count,
         s.seen,
         s.last_refresh.map_or("-".into(), |t| t.to_string()),
         s.current,
-        u8::from(s.sync_failed)
+        u8::from(s.sync_failed),
+        s.ready_beep.map_or("-", |ok| if ok { "ok" } else { "error" })
     )
 }
 
@@ -509,6 +505,7 @@ fn state_from_text(text: &str) -> Option<State> {
             "refreshed" => s.last_refresh = if v == "-" { None } else { Some(v.parse().ok()?) },
             "current" => s.current = v.parse().ok()?,
             "sync_failed" => s.sync_failed = v == "1",
+            "ready_beep" => s.ready_beep = if v == "-" { None } else { Some(v == "ok") },
             _ => {}
         }
     }
@@ -558,6 +555,7 @@ mod tests {
             last_refresh: Some(1_795_590_000),
             current: 3,
             sync_failed: true,
+            ready_beep: Some(false),
         };
         assert_eq!(state_from_text(&state_to_text(&s)), Some(s));
         assert_eq!(state_from_text(&state_to_text(&State::default())), Some(State::default()));

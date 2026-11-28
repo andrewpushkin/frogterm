@@ -164,23 +164,22 @@ make flash FEATURES=bars          # test build: six colour bars only
 
 | Sound | Meaning |
 |---|---|
-| short high chirp | button press noticed |
-| pip-pip every 2 s | all is well, waiting for the panel's 3-minute rest |
-| one beep | update finished |
-| three low beeps | update failed (retried in 30 min, up to 3 times) |
+| short high chirp | button press accepted |
+| three short high pips | busy: the press is ignored (press again when the LED is off) |
+| one beep | ready again after a good update (when the panel's 3-minute rest ends) |
+| three low beeps | ready again after a failed update (retried in 30 min, up to 3 times) |
 
 | LED | Meaning |
 |---|---|
-| blinking | working (Wi-Fi sync, downloads, drawing) |
-| on | the panel rests after a refresh (3 min): a press has to wait |
-| off | ready: a press updates right away |
+| on | busy: working (Wi-Fi sync, downloads, drawing) or the panel rests after a refresh (3 min); presses are ignored |
+| off | ready: a press is done right away |
 
 - **Green button**: always syncs over Wi-Fi: downloads a new batch of
   photos, the weather and today's and tomorrow's events, and shows the first
-  new photo. Presses during an update chirp and are ignored. The panel rests
-  between refreshes (E Ink care): a press too soon after the last refresh
-  waits awake with a pip-pip every 2 s, then updates. The update itself is
-  silent (the screen changing shows it).
+  new photo. The LED is on from the moment the device wakes until it is
+  ready again; the panel rests 3 minutes between refreshes (E Ink care). A
+  press while the LED is on gets three short pips and is ignored. The final
+  beep comes when the LED goes off.
 - **Scheduled updates**: a stored photo not seen yet; once every stored photo
   has been on the screen, a new batch is downloaded.
 - **Side buttons**: previous / next stored photo, no Wi-Fi. Photos seen this

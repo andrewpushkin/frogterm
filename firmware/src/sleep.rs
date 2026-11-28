@@ -47,8 +47,8 @@ pub fn button_held() -> bool {
     BUTTON_GPIOS.iter().any(|&g| is_down(g))
 }
 
-/// While the device is awake, every new press of any button gets a short
-/// chirp and is otherwise ignored (the running update just goes on).
+/// While the device is awake (busy), every new press of any button gets the
+/// triple "busy" beep and is otherwise ignored (the running update goes on).
 pub fn spawn_press_listener() {
     let spawned = std::thread::Builder::new().name("buttons".into()).stack_size(4096).spawn(|| {
         // presses already down (e.g. the one that woke us) are not new ones
@@ -58,7 +58,7 @@ pub fn spawn_press_listener() {
             let down = BUTTON_GPIOS.map(is_down);
             if down.iter().zip(&was_down).any(|(&d, &w)| d && !w) {
                 log::info!("button pressed during the update: ignored");
-                crate::board::play(frogterm_core::beep::PRESS);
+                crate::board::play(frogterm_core::beep::BUSY);
             }
             was_down = down;
         }

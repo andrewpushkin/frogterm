@@ -1,4 +1,5 @@
-//! Buzzer patterns (spec 7.2): success = one short high beep, error = three low beeps.
+//! Buzzer patterns (spec 7.2): success = one short high beep, error = three low
+//! beeps, busy = three short high pips.
 
 /// One tone; `hz == 0` is a pause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,15 +8,15 @@ pub struct Tone {
     pub ms: u32,
 }
 
+/// The final beep: the device is ready for the next press (good update).
 pub const SUCCESS: &[Tone] = &[Tone { hz: 2000, ms: 150 }];
-/// "All is well, just wait": played every `WAIT_EVERY_MS` while a button
-/// press waits for the panel's rest (the update itself is silent).
-pub const WAIT: &[Tone] = &[Tone { hz: 2700, ms: 40 }, Tone { hz: 0, ms: 60 }, Tone { hz: 2700, ms: 40 }];
+/// "Busy, press ignored": a press while the device works or the panel rests.
+pub const BUSY: &[Tone] =
+    &[Tone { hz: 2700, ms: 40 }, Tone { hz: 0, ms: 60 }, Tone { hz: 2700, ms: 40 }, Tone { hz: 0, ms: 60 }, Tone { hz: 2700, ms: 40 }];
 
 /// Short chirp: "I saw the button press" (right after the button wakes the device).
 pub const PRESS: &[Tone] = &[Tone { hz: 3000, ms: 50 }];
-/// Interval of the `WAIT` pip-pip.
-pub const WAIT_EVERY_MS: u64 = 2000;
+/// The final beep after a failed update (or a press that could not be done).
 pub const ERROR: &[Tone] =
     &[Tone { hz: 1000, ms: 100 }, Tone { hz: 0, ms: 80 }, Tone { hz: 1000, ms: 100 }, Tone { hz: 0, ms: 80 }, Tone { hz: 1000, ms: 100 }];
 
@@ -38,14 +39,14 @@ mod tests {
     }
 
     #[test]
-    fn wait_is_an_audible_double_pip() {
+    fn busy_is_an_audible_high_triple_pip_unlike_the_error() {
         // the piezo is loud only near its resonance (~2.5-4 kHz): a 1.2 kHz,
         // 30 ms tick was inaudible on the device
-        let pips: Vec<&Tone> = WAIT.iter().filter(|t| t.hz > 0).collect();
-        assert_eq!(pips.len(), 2, "pip-pip, unlike the single press chirp");
+        let pips: Vec<&Tone> = BUSY.iter().filter(|t| t.hz > 0).collect();
+        assert_eq!(pips.len(), 3);
         assert!(pips.iter().all(|t| (2500..=4000).contains(&t.hz) && t.ms >= 40));
         for other in [SUCCESS, PRESS, ERROR] {
-            assert_ne!(WAIT, other);
+            assert_ne!(BUSY, other);
         }
     }
 

@@ -18,9 +18,6 @@ use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::{fonts, FontRenderer};
 
-/// Reference time for the LED blinking.
-static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-
 /// How long the real panel takes to show a new image; the window fades it in
 /// over the same time.
 const REFRESH: Duration = Duration::from_secs(20);
@@ -38,9 +35,9 @@ static STATUS_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR10_
 pub struct Shared {
     /// A new panel image, not drawn yet.
     screen: Mutex<Option<FrameBuffer>>,
-    /// The device is awake: presses only chirp.
+    /// The device is awake: presses get the busy beep and are ignored.
     busy: AtomicBool,
-    /// The status LED: 0 off, 1 on, 2 blinking.
+    /// The status LED: 0 off (ready), 1 on (busy).
     led: AtomicU8,
     /// When the timer wakes the sleeping device.
     wake_at: Mutex<Option<Instant>>,
@@ -62,13 +59,9 @@ impl Shared {
         self.led.store(led as u8, Ordering::Relaxed);
     }
 
-    /// Whether the LED is lit now (blinking: 4 times a second).
+    /// Whether the LED is lit now.
     fn led_lit(&self) -> bool {
-        match self.led.load(Ordering::Relaxed) {
-            0 => false,
-            1 => true,
-            _ => (START.get_or_init(Instant::now).elapsed().as_millis() / 250).is_multiple_of(2),
-        }
+        self.led.load(Ordering::Relaxed) != 0
     }
 
     /// The device went to deep sleep until `at` (or a button press).
@@ -164,8 +157,8 @@ pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
         let busy = ui.busy.load(Ordering::Relaxed);
         for p in pressed {
             if busy {
-                // as on the device: a chirp, the running update goes on
-                log::info!("button pressed during the update: ignored (chirp)");
+                // as on the device: the busy beep, the running update goes on
+                log::info!("button pressed during the update: ignored (sound: pip-pip-pip, busy)");
             } else {
                 ui.set_busy(true);
                 presses.send(p).map_err(|_| anyhow!("the device thread stopped"))?;
@@ -239,7 +232,7 @@ fn draw_bar(pixels: &mut [u32], awake: bool, led_lit: bool, held: Option<Press>,
             &mut c,
         );
     }
-    // blinking while working, on while the panel rests, off when ready
+    // on while busy (working, or the panel rests), off when ready
     let led = if led_lit { Rgb888::new(60, 230, 90) } else { Rgb888::new(35, 75, 45) };
     let y = 66;
     let _ = Circle::new(Point::new(12, y - 6), 12).into_styled(PrimitiveStyle::with_fill(led)).draw(&mut c);
