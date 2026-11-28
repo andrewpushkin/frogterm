@@ -18,6 +18,7 @@ pub mod layout;
 pub mod moon;
 pub mod pcf8563;
 pub mod photo_list;
+pub mod portal;
 pub mod schedule;
 pub mod screen;
 pub mod sht4x;
