@@ -2,14 +2,14 @@
 """Test the reTerminal over its USB-serial port: simulated button presses and
 the log (runs in the Docker image, which has pyserial; see `make press`).
 
-  serial.py --port P press BUTTON [--secs N]  reset the chip and press BUTTON as
+  console.py --port P press BUTTON [--secs N]  reset the chip and press BUTTON as
                                              the waking button, then the log
                                              until the device sleeps
-  serial.py --port P send BUTTON [--secs N]   press BUTTON now (device awake)
-  serial.py --port P log [--secs N]           the log, no reset
+  console.py --port P send BUTTON [--secs N]   press BUTTON now (device awake)
+  console.py --port P log [--secs N]           the log, no reset
 
 BUTTON: green, next, previous (right, left), "hold green", "hold next".
-The port is opened without touching DTR/RTS, so opening it resets nothing.
+Opening the port resets nothing (DTR/RTS are changed in a safe order).
 """
 import argparse
 import sys
@@ -19,11 +19,13 @@ import serial
 
 
 def open_port(name):
+    # opened with DTR and RTS both on (the auto-reset circuit does nothing
+    # then), RTS goes off first: RTS on alone would pull EN low, a reset
     s = serial.Serial()
     s.port, s.baudrate, s.timeout = name, 115200, 0.2
-    s.dtr = False  # GPIO0 high: a reset boots the firmware, not the ROM loader
-    s.rts = False  # EN high: running
     s.open()
+    s.rts = False  # EN high: running
+    s.dtr = False  # GPIO0 high: a reset boots the firmware, not the ROM loader
     return s
 
 

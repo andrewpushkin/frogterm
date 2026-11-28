@@ -77,14 +77,14 @@ flash: image
 monitor:
 	@$(FIND_PORT); $(DOCKER_DEV) espflash monitor --chip esp32s3 --port $$port --elf $(ELF)
 
-# Testing over the serial port (tools/serial.py): BUTTON=green|next|previous|
+# Testing over the serial port (tools/console.py): BUTTON=green|next|previous|
 # "hold green"|"hold next"; SECS: how long to show the log.
 # press: reset the chip and press BUTTON as the waking button, show the log until it sleeps
 # send:  press BUTTON now (the device must be awake); log: the log, no reset
 press send:
-	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/serial.py --port $$port $@ "$(BUTTON)" $(if $(SECS),--secs $(SECS))
+	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/console.py --port $$port $@ "$(BUTTON)" $(if $(SECS),--secs $(SECS))
 log:
-	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/serial.py --port $$port log $(if $(SECS),--secs $(SECS))
+	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/console.py --port $$port log $(if $(SECS),--secs $(SECS))
 
 # Rebuild the image only when the Dockerfile changes (stamp file in build/).
 image: build/.image-stamp

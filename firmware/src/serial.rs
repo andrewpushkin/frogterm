@@ -6,7 +6,7 @@
 //! level is held down for a moment, or 10.5 s for a hold). The chip hears
 //! nothing in deep sleep, so a test resets it (power-on) and types the
 //! command within `BOOT_WINDOW` of the start: it then counts as the button
-//! that woke the device (`tools/serial.py press`).
+//! that woke the device (`tools/console.py press`).
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
