@@ -89,7 +89,8 @@ clean:
 
 help:
 	@echo "make            build the firmware -> build/frogterm.bin (in Docker)"
-	@echo "make flash      flash the reTerminal [USBIPD_BUSID=<id>] [PORT=/dev/ttyACM0] [FEATURES=bars]"
+	@echo "make flash      flash the reTerminal [USBIPD_BUSID=<id>] [PORT=/dev/ttyACM0] [FEATURES=seed-config|bars]"
+	@echo "                hold green 10 s on the device: settings page on its Wi-Fi frogterm-setup"
 	@echo "make monitor    serial log of the reTerminal"
 	@echo "make tests      run all unit tests"
 	@echo "make emulator   the device in a window: click its 3 buttons (flash in out/)"

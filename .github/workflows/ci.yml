@@ -96,13 +96,13 @@ jobs:
             build/target
           key: firmware-${{ hashFiles('Dockerfile') }}-${{ hashFiles('firmware/Cargo.lock', 'firmware/sdkconfig.defaults') }}
           restore-keys: firmware-${{ hashFiles('Dockerfile') }}-
-      - name: Example config (secrets stay out of CI)
+      - name: Example config (the seed-config build checks it)
         run: cp config.example.toml config.toml
       - name: Firmware fmt and clippy
         run: |
           docker run --rm --init -v "$PWD":/work -w /work -u "$(id -u):$(id -g)" -e HOME=/tmp \
             -e CARGO_HOME=/work/.cargo-docker -e CARGO_TARGET_DIR=/work/build/target frogterm-dev \
-            sh -c 'cd firmware && cargo fmt --check && cargo clippy --release -- -D warnings'
+            sh -c 'cd firmware && cargo fmt --check && cargo clippy --release -- -D warnings && cargo clippy --release --all-features -- -D warnings'
       - name: make firmware
         run: make firmware
       - uses: actions/upload-artifact@v7

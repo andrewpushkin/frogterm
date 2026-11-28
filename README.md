@@ -55,10 +55,14 @@ which is built automatically the first time (`ubuntu:26.04`).
 cp config.example.toml config.toml
 ```
 
-`config.toml` is gitignored and is the **only** place for private data. The
-emulator reads it when it runs, and its **settings page** edits it (see
-below). The firmware still has it baked in for now, so after changing it,
-flash again.
+`config.toml` is gitignored and is the **only** place for private data on
+the PC. The emulator reads it when it runs, and its **settings page** edits
+it (see below). The device keeps its own copy of the same settings (in its
+NVS flash) and edits it with the same page in its **settings mode** (see
+"Using it"); nothing is built into the firmware, so changing a setting needs
+no flashing. To start a device with your `config.toml` instead of typing it
+into the page, flash once with `make flash FEATURES=seed-config`: an empty
+device takes it as its settings (a device that has settings keeps them).
 
 ## Where to get your real data
 
@@ -70,7 +74,7 @@ flash again.
 2. Open the album → **Share** (or **⋮ → Options**) → turn on **Link sharing**
    → **Copy link**. It looks like `https://photos.app.goo.gl/AbCdEf123`.
 3. Anyone with this link can see the album. To revoke it, turn link sharing
-   off and on again (new link) and flash again.
+   off and on again (new link) and put the new link in the settings page.
 
 Check it on the PC: `make pc-check` reads the whole album without a login.
 
@@ -171,14 +175,36 @@ Then in WSL:
 make                              # firmware -> build/frogterm.bin
 make flash USBIPD_BUSID=2-3       # attaches the USB port to WSL and flashes
 make monitor                      # serial log (Ctrl+C to quit)
+make flash FEATURES=seed-config   # an empty device starts with config.toml
 make flash FEATURES=bars          # test build: six colour bars only
 ```
+
+Flashing keeps the device's settings. A device without settings (the first
+flash) starts in settings mode on its own Wi-Fi.
 
 ## Using it
 
 Every button acts **when it is let go**. The one thing that happens while a
-button is down: holding green or right for 10 s opens settings mode (in the
-emulator for now; see "Try it on the PC first").
+button is down: holding green or right for 10 s opens settings mode (below).
+
+### Settings mode
+
+- **Hold green 10 s**: the device makes its own open Wi-Fi network,
+  **frogterm-setup**. Join it with a phone and open **http://192.168.4.1/**.
+- **Hold right 10 s**: the device joins your Wi-Fi and serves the page there;
+  the panel shows its address (e.g. `http://192.168.1.23/`). If it cannot
+  join: three low beeps and nothing changes.
+- The chirp comes at the 10-s mark, the LED stays on, and the panel shows the
+  network and the address. The page has every setting; Save checks them
+  (the device needs `wifi_ssid`) and stores them. The Wi-Fi password and
+  secret calendar links are never shown: left as they are, they stay.
+- **Press green** to finish: the device syncs with the new settings (after
+  the panel's 3-minute rest). With settings that still cannot be used, green
+  gets three low beeps and settings mode stays. Nobody on the page for
+  15 min finishes too (an hour at most); with unusable settings the device
+  then sleeps until a button is pressed.
+- A device without settings starts in settings mode (own Wi-Fi) whenever a
+  button wakes it.
 
 | Sound | Meaning |
 |---|---|
@@ -218,15 +244,18 @@ emulator for now; see "Try it on the PC first").
   album reading, dithering to the six inks, layout and fonts (event titles in
   Rubik SemiBold — Latin, Cyrillic and Hebrew right-to-left — rasterized to 1 bit
   at build time by `core/build.rs`), weather, iCal calendar, Israel time zone, schedule,
-  panel protocol, and what one wake does (`app.rs`, behind a `Device` trait).
+  panel protocol, what one wake does (`app.rs`, behind a `Device` trait), the
+  settings file (`config.rs`), the settings page (`portal.rs` + `portal.html`)
+  and press/hold detection (`buttons.rs`).
 - `pc/` — the emulator (a PC `Device` in a window) and the album check.
 - `firmware/` — the reTerminal `Device`, with `esp-idf-svc`: e-paper on
   SPI, RTC and temperature sensor on I2C, buzzer, battery, Wi-Fi, HTTPS,
-  flash storage, deep sleep.
+  flash storage, deep sleep, and settings mode (`portal.rs`: access point or
+  home Wi-Fi, the page on port 80, the settings in NVS).
 - `docs/superpowers/` — design and implementation plan.
 
 Flash wear: photo slots are rewritten about once per batch, the weather and
-calendar go to wear-levelled NVS, the album list weekly — far below the
+calendar (and the settings, when saved) go to wear-levelled NVS, the album list weekly — far below the
 ~100 000 erase cycles of the flash.
 
 ## Credits
