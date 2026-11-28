@@ -17,7 +17,6 @@ pub fn load_text(nvs: &EspNvs<NvsDefault>) -> Option<String> {
     Some(String::from_utf8_lossy(bytes).into_owned())
 }
 
-#[allow(dead_code)] // used by the settings page (next step)
 pub fn save_text(nvs: &EspNvs<NvsDefault>, text: &str) -> Result<()> {
     nvs.set_blob(BLOB, text.as_bytes()).context("store the settings in NVS")
 }

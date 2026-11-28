@@ -99,6 +99,11 @@ impl Net {
         request(Method::Post, url, Some(body), sink)
     }
 
+    /// The device's address on the network.
+    pub fn ip(&self) -> Option<std::net::Ipv4Addr> {
+        self.wifi.wifi().sta_netif().get_ip_info().ok().map(|i| i.ip)
+    }
+
     pub fn stop(mut self) {
         drop(self.sntp.take());
         let _ = self.wifi.disconnect();

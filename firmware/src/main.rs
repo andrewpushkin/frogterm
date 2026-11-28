@@ -4,6 +4,7 @@ mod app;
 mod board;
 mod epd;
 mod net;
+mod portal;
 mod rtc;
 mod settings;
 mod sleep;

@@ -56,7 +56,7 @@ fn levels() -> [bool; 3] {
 }
 
 /// Milliseconds since boot.
-fn ms() -> u64 {
+pub fn ms() -> u64 {
     (unsafe { sys::esp_timer_get_time() } / 1000) as u64
 }
 
@@ -88,7 +88,6 @@ pub fn gesture_after_wake(p: Press) -> Gesture {
 /// Settings mode is on: green goes to the settings loop, not to the busy pips.
 static SETTINGS_MODE: AtomicBool = AtomicBool::new(false);
 
-#[allow(dead_code)] // settings mode (next step)
 pub fn set_settings_mode(on: bool) {
     SETTINGS_MODE.store(on, Ordering::Relaxed);
 }

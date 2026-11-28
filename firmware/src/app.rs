@@ -2,7 +2,8 @@
 //! with the PC emulator (`frogterm_core::app`), then deep sleep. This file
 //! implements `Device` for the reTerminal: panel, buzzer, NVS, flash, Wi-Fi.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -10,7 +11,7 @@ use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use frogterm_core::album::{self, Photo};
-use frogterm_core::app::{self, Device, Led, Online, Readings, State, Wake};
+use frogterm_core::app::{self, Device, Led, Online, Readings, State, Via, Wake};
 use frogterm_core::beep::Tone;
 use frogterm_core::buttons::Gesture;
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
@@ -33,6 +34,8 @@ use crate::store::Store;
 const CRASH_PAUSE_SECS: u64 = 30 * 60;
 /// Whole update must finish within this, or the device gives up and sleeps.
 const WATCHDOG: Duration = Duration::from_secs(300);
+/// Settings mode ends after this in any case (battery).
+const SETTINGS_MAX: Duration = Duration::from_secs(60 * 60);
 const MAX_PAGES: usize = 100;
 const ATTEMPTS: usize = 3;
 /// Stack of the download threads (TLS handshake needs ~10 KB).
@@ -102,16 +105,26 @@ impl Nvs {
 
 /// The reTerminal as `app::Device`.
 struct Reterminal<'d> {
-    cfg: &'d Config,
+    /// `None` while the settings cannot be used (settings mode only).
+    cfg: Option<&'d Config>,
     board: Board<'d>,
     epd: Epd<'d>,
     rtc: Rtc<'d>,
     rtc_now: Option<i64>,
+    /// When `rtc_now` was read.
+    rtc_read: Instant,
     nvs: Nvs,
     /// Taken by the (single) Wi-Fi session of a wake.
     modem: Option<Modem<'static>>,
     sysloop: EspSystemEventLoop,
     nvs_part: EspDefaultNvsPartition,
+}
+
+impl Reterminal<'_> {
+    /// The time now, from the RTC reading at the start of the wake.
+    fn now(&self) -> Option<i64> {
+        self.rtc_now.map(|t| t + self.rtc_read.elapsed().as_secs() as i64).or_else(unix_now)
+    }
 }
 
 impl Device for Reterminal<'_> {
@@ -163,7 +176,7 @@ impl Device for Reterminal<'_> {
         // read the stored photo list from flash while Wi-Fi joins
         let preload = if batch > 0 { Some(crate::spawn_with_internal_stack("preload", 8 * 1024, || Store.load_list())?) } else { None };
         let modem = self.modem.take().ok_or_else(|| anyhow!("Wi-Fi was already used in this wake"))?;
-        let cfg = self.cfg;
+        let cfg = self.cfg.ok_or_else(|| anyhow!("no usable settings"))?;
         let (ssid, password) = (cfg.wifi_ssid.as_deref().unwrap_or(""), cfg.wifi_password.as_deref().unwrap_or(""));
         let mut net = Net::connect(modem, self.sysloop.clone(), self.nvs_part.clone(), ssid, password, self.nvs.last_ap)?;
         tick("Wi-Fi up");
@@ -216,9 +229,6 @@ fn run_inner() -> Result<std::convert::Infallible> {
         Wake::Timer | Wake::PowerOn => None,
     };
     log::info!("frogterm {} woke by {wake:?} ({gesture:?})", env!("CARGO_PKG_VERSION"));
-    if let Some(Gesture::Hold(p)) = gesture {
-        log::info!("{p:?} held: settings mode is not on the device yet, a press for now");
-    }
     let p = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;
@@ -227,6 +237,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
         tz::set_zone(c.zone());
     }
     let mut rtc = Rtc::new(p.i2c0, p.pins.gpio19, p.pins.gpio20)?;
+    let rtc_read = Instant::now();
     let rtc_now = rtc.read().unwrap_or_else(|e| {
         log::warn!("RTC read failed: {e:#}");
         None
@@ -238,6 +249,18 @@ fn run_inner() -> Result<std::convert::Infallible> {
     });
     log::info!("room {room:?} (°C, %RH)");
     log::info!("RTC {rtc_now:?}");
+
+    let next = match (gesture, &cfg) {
+        (Some(Gesture::Hold(p)), _) => app::via_for(p).map_or(Next::Wake(wake), Next::Settings),
+        // nothing to run on: the settings page, on the device's own Wi-Fi
+        (_, None) if wake != Wake::Timer => Next::Settings(Via::AccessPoint),
+        (_, None) => {
+            log::warn!("no usable settings: sleeping until a button is pressed");
+            crate::board::set_led(Led::Off);
+            deep_sleep(schedule::when_time_unknown(), schedule::arm_button(button_held()))
+        }
+        _ => Next::Wake(wake),
+    };
 
     // woke early: straight back to sleep, before powering anything up. At
     // the end of the panel's rest: LED off and the final beep (ready)
@@ -254,11 +277,12 @@ fn run_inner() -> Result<std::convert::Infallible> {
     crate::board::set_led(Led::On);
 
     let mut board = Board::new(p.pins.gpio21, p.pins.gpio16, p.pins.gpio14)?;
-    let _gestures = crate::sleep::spawn_gesture_listener();
+    let gestures = crate::sleep::spawn_gesture_listener();
     // watchdog: never stay awake (battery) if anything hangs
-    std::thread::spawn(|| {
-        std::thread::sleep(WATCHDOG);
-        log::error!("update took longer than {} s, giving up", WATCHDOG.as_secs());
+    let limit = if next == Next::Wake(wake) { WATCHDOG } else { SETTINGS_MAX + Duration::from_secs(120) };
+    std::thread::spawn(move || {
+        std::thread::sleep(limit);
+        log::error!("awake longer than {} s, giving up", limit.as_secs());
         deep_sleep(30 * 60, schedule::arm_button(button_held()));
     });
     let battery_mv = board.battery_mv();
@@ -270,25 +294,84 @@ fn run_inner() -> Result<std::convert::Infallible> {
         deep_sleep(24 * 3600, schedule::arm_button(button_held()));
     }
 
-    let Some(cfg) = cfg else {
-        log::warn!("no usable settings: sleeping until a button is pressed");
-        crate::board::set_led(Led::Off);
-        deep_sleep(schedule::when_time_unknown(), true)
+    let mut dev = Reterminal { cfg: cfg.as_ref(), board, epd, rtc, rtc_now, rtc_read, nvs, modem: Some(p.modem), sysloop, nvs_part };
+    let secs = match (next, &cfg) {
+        (Next::Settings(via), _) => settings_mode(&mut dev, &mut state, via, &gestures),
+        (Next::Wake(wake), Some(cfg)) => {
+            let readings = Readings { now: rtc_now, battery_mv, room_c: room.map(|r| r.0) };
+            with_rules(cfg, |rules| app::run(&mut dev, &mut state, rules, wake, readings))
+        }
+        (Next::Wake(_), None) => schedule::when_time_unknown(), // not reached: no settings open settings mode
     };
+    // buttons stay active: a press wakes the device
+    deep_sleep(secs, schedule::arm_button(button_held()))
+}
+
+/// What this wake does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    Wake(Wake),
+    Settings(Via),
+}
+
+/// `f` with the wake logic's settings from `cfg`.
+fn with_rules<T>(cfg: &Config, f: impl FnOnce(&app::Config) -> T) -> T {
     let times = cfg.update_times();
-    let rules = app::Config {
+    f(&app::Config {
         update_times: &times,
         refresh_minutes: cfg.refresh_minutes,
         photo_batch: cfg.photo_batch,
         opacity: cfg.overlay_opacity,
         place: cfg.label(),
         panel_rest: true,
+    })
+}
+
+/// Settings mode: the page on the network `via`, until green is pressed (or
+/// nobody opened the page for 15 min) with usable settings. Returns the
+/// seconds to sleep; the sync with the new settings comes at that timer wake
+/// (fresh Wi-Fi, the settings read again).
+fn settings_mode(dev: &mut Reterminal, state: &mut State, via: Via, gestures: &Receiver<Gesture>) -> u64 {
+    app::start_settings(dev);
+    let Some(modem) = dev.modem.take() else { return app::settings_failed(dev, state, dev.now()) };
+    let portal = match crate::portal::Portal::open(via, modem, dev.sysloop.clone(), dev.nvs_part.clone(), dev.cfg, dev.nvs.last_ap) {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!("settings mode could not start: {e:#}");
+            return app::settings_failed(dev, state, dev.now());
+        }
     };
-    let mut dev = Reterminal { cfg: &cfg, board, epd, rtc, rtc_now, nvs, modem: Some(p.modem), sysloop, nvs_part };
-    let readings = Readings { now: rtc_now, battery_mv, room_c: room.map(|r| r.0) };
-    let secs = app::run(&mut dev, &mut state, &rules, wake, readings);
-    // buttons stay active: a press wakes the device
-    deep_sleep(secs, schedule::arm_button(button_held()))
+    if let Err(e) = app::show_settings(dev, state, &portal.network_name, &portal.address, dev.now()) {
+        log::warn!("settings screen: {e:#}");
+    }
+    crate::sleep::set_settings_mode(true);
+    let started = Instant::now();
+    let idle_limit = Duration::from_secs(app::SETTINGS_IDLE_SECS);
+    let secs = loop {
+        let pressed = gestures.recv_timeout(Duration::from_secs(1)).is_ok();
+        let idle = portal.idle() >= idle_limit;
+        let over = started.elapsed() >= SETTINGS_MAX;
+        if !(pressed || idle || over) {
+            continue;
+        }
+        if idle {
+            log::info!("nobody opened the settings page for {} min", app::SETTINGS_IDLE_SECS / 60);
+        }
+        match crate::settings::load(&dev.nvs.nvs) {
+            Some(cfg) => break with_rules(&cfg, |rules| app::end_settings(dev, state, rules, dev.now())),
+            // still unusable: green stays in settings mode; left alone, the
+            // device sleeps (battery) until a button opens it again
+            None if pressed => dev.beep(beep::ERROR),
+            None => {
+                dev.beep(beep::ERROR);
+                dev.led(Led::Off);
+                break schedule::when_time_unknown();
+            }
+        }
+    };
+    crate::sleep::set_settings_mode(false);
+    portal.close();
+    secs
 }
 
 /// Free memory, for diagnosing out-of-memory crashes.
