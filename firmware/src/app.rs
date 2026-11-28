@@ -188,6 +188,9 @@ impl Device for Reterminal<'_> {
         // the RTC keeps good time; wait for NTP only if it lost power
         let now = now.or_else(|| net.synced_time(Duration::from_secs(15))).ok_or_else(|| anyhow!("time unknown"))?;
         let fetched = online(cfg, &mut net, now, batch, stored_list)?;
+        if cfg.auto_update {
+            crate::ota::auto_update(&mut net, &self.nvs.nvs);
+        }
         // every Wi-Fi session corrects the RTC from NTP (usually already
         // done during the downloads, so this rarely waits)
         match net.synced_time(Duration::from_secs(10)) {

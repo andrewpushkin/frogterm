@@ -244,6 +244,14 @@ running one, leaves settings mode and starts it; settings and stored photos
 stay. If the new firmware crashes or hangs before its first normal sleep,
 the device goes back to the previous one by itself at the next restart.
 
+**Automatic updates** (`auto_update`, on by default; a checkbox on the page):
+every sync also reads the release number on the [project site](https://andrewpushkin.github.io/frogterm/version.txt)
+(one small request) and, when a newer release is out, downloads its
+`firmware.bin` and installs it the same way; it starts at the next wake. A
+release that was rolled back is not installed again (the next one is). Only
+a release updates itself: a firmware built and flashed locally (version
+`dev`) never is replaced by one.
+
 The device needs **one USB flash** of a firmware with this feature first
 (it brings the flash layout with the update slots and the bootloader that
 can roll back); until then the page says so. Flash layout: `factory`,

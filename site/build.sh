@@ -17,6 +17,8 @@ cp docs/emulator.png "$out/"
 head -c 32768 build/frogterm-full.bin > "$out/bootloader.bin"                       # 0x0
 tail -c +32769 build/frogterm-full.bin | head -c 4096 > "$out/partitions.bin"     # 0x8000
 cp build/frogterm.bin "$out/firmware.bin"                                         # 0x10000
+# what an automatic update looks for (with firmware.bin above)
+echo "$version" > "$out/version.txt"
 # a blank otadata: the firmware just installed runs, not an older update
 head -c 8192 /dev/zero | tr '\000' '\377' > "$out/otadata.bin"                    # 0xA10000
 cat > "$out/manifest.json" <<EOF
