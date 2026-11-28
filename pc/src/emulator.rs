@@ -359,7 +359,7 @@ impl Emulated {
         let mut last_request = Instant::now();
         let end = loop {
             let finish = match gestures.try_recv() {
-                Ok(Gesture::Press(Press::Update) | Gesture::Hold(Press::Update)) => true,
+                Ok(g) if app::ends_settings(g) => true,
                 Ok(_) | Err(TryRecvError::Empty) => false,
                 Err(TryRecvError::Disconnected) => break SettingsEnd::Closed,
             };

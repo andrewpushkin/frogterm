@@ -342,6 +342,16 @@ impl Config {
         Ok(c)
     }
 
+    /// `parse`, and on the device (`wifi_needed`) a Wi-Fi network too: it
+    /// can do nothing without one.
+    pub fn usable(text: &str, wifi_needed: bool) -> Result<Config> {
+        let c = Config::parse(text)?;
+        if wifi_needed && c.wifi_ssid.as_deref().is_none_or(|s| s.trim().is_empty()) {
+            bail!("wifi_ssid is missing (the device needs its Wi-Fi)");
+        }
+        Ok(c)
+    }
+
     fn check(&self) -> Result<()> {
         let c = self;
         if !c.album_url.starts_with("https://") {
@@ -407,6 +417,17 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_device_needs_its_wifi() {
+        let base = "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\n";
+        assert!(Config::usable(base, false).is_ok(), "the emulator needs no Wi-Fi settings");
+        let e = Config::usable(base, true).unwrap_err();
+        assert!(format!("{e:#}").contains("wifi_ssid"), "{e:#}");
+        assert!(Config::usable(&format!("{base}wifi_ssid = \"  \"\n"), true).is_err(), "blank is missing");
+        assert_eq!(Config::usable(&format!("{base}wifi_ssid = \"home\"\n"), true).unwrap().wifi_ssid.as_deref(), Some("home"));
+        assert!(Config::usable("city = \"x\"\n", false).is_err(), "and the other checks still apply");
+    }
 
     #[test]
     fn minimal_config_has_link_and_city() {

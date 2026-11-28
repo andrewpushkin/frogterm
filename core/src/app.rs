@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use embedded_graphics::primitives::Rectangle;
 
 use crate::beep::{self, Tone};
-use crate::buttons::{self, Press};
+use crate::buttons::{self, Gesture, Press};
 use crate::calendar::{self, DayEvent};
 use crate::date::Date;
 use crate::dither::{dither_area, veil};
@@ -279,16 +279,27 @@ pub fn settings_failed(dev: &mut impl Device, state: &mut State, now: Option<i64
     secs
 }
 
-/// Settings mode ended with usable settings: a full sync as after a green
-/// press, once the panel's rest (after the settings screen) is over. Returns
-/// the seconds to sleep.
-pub fn leave_settings(dev: &mut impl Device, state: &mut State, cfg: &Config, r: Readings) -> u64 {
+/// The gesture that ends settings mode: green, pressed or held.
+pub fn ends_settings(g: Gesture) -> bool {
+    matches!(g, Gesture::Press(Press::Update) | Gesture::Hold(Press::Update))
+}
+
+/// Settings mode ended with usable settings: a full sync (as after a green
+/// press) is due once the panel's rest after the settings screen is over.
+/// Saves that and returns the seconds to sleep until then (at least 1).
+pub fn end_settings(dev: &mut impl Device, state: &mut State, cfg: &Config, now: Option<i64>) -> u64 {
     log::info!("settings mode ends: a full sync is due");
     state.pending_sync = true;
-    let now = r.now.or_else(|| dev.clock());
     let left = now.filter(|_| cfg.panel_rest).and_then(|now| resting(now, state)).unwrap_or(0);
     state.target = now.map_or(0, |now| now + left as i64);
     dev.save_state(state);
+    left.max(1)
+}
+
+/// `end_settings`, then that wake at once (the emulator: no deep sleep
+/// between). Returns the seconds to sleep.
+pub fn leave_settings(dev: &mut impl Device, state: &mut State, cfg: &Config, r: Readings) -> u64 {
+    end_settings(dev, state, cfg, r.now.or_else(|| dev.clock()));
     run(dev, state, cfg, Wake::Timer, r)
 }
 
@@ -1088,6 +1099,29 @@ mod tests {
         assert_eq!(dev.shown.last(), Some(&Some(10)));
         assert!(!st.pending_sync, "once");
         assert_eq!(st.target, schedule::next_update(T0 + 180, &[(6, 0)]));
+    }
+
+    #[test]
+    fn green_ends_settings() {
+        assert!(ends_settings(Gesture::Press(Press::Update)));
+        assert!(ends_settings(Gesture::Hold(Press::Update)));
+        assert!(!ends_settings(Gesture::Press(Press::Next)));
+        assert!(!ends_settings(Gesture::Hold(Press::Next)));
+        assert!(!ends_settings(Gesture::Press(Press::Previous)));
+    }
+
+    #[test]
+    fn ending_settings_sleeps_until_the_rest_is_over() {
+        let (mut dev, mut st) = stocked(3);
+        show_settings(&mut dev, &mut st, AP_SSID, AP_ADDRESS, Some(T0)).unwrap();
+        assert_eq!(end_settings(&mut dev, &mut st, &cfg(), Some(T0 + 60)), 120);
+        assert!(st.pending_sync);
+        assert_eq!(st.target, T0 + 180);
+        assert_eq!(dev.saved, Some(st.clone()), "kept through deep sleep");
+        assert!(dev.online_calls.is_empty() && dev.beeps.is_empty(), "nothing else yet");
+        assert_eq!(end_settings(&mut dev, &mut st, &cfg(), Some(T0 + 600)), 1, "rest over: wake at once");
+        assert_eq!(st.target, T0 + 600);
+        assert_eq!(end_settings(&mut dev, &mut st, &cfg(), None), 1, "time unknown: wake at once");
     }
 
     #[test]

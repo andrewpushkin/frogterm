@@ -84,6 +84,12 @@ impl Holds {
         Holds { since: down.map(|d| d.then_some(now_ms)), done: [false; 3] }
     }
 
+    /// Buttons down now give nothing, not even when let go (the button
+    /// that opened settings mode, still held when the listener starts).
+    pub fn ignoring(down: [bool; 3]) -> Holds {
+        Holds { since: down.map(|d| d.then_some(0)), done: down }
+    }
+
     /// The gesture since the last poll, if any.
     pub fn poll(&mut self, down: [bool; 3], now_ms: u64) -> Option<Gesture> {
         // one gesture per poll; a second button's change waits for the next one
@@ -252,6 +258,19 @@ mod tests {
         assert_eq!(h.poll(NONE, 700), Some(Gesture::Press(Press::Update)));
         let mut h = Holds::new(RIGHT, 500);
         assert_eq!(h.poll(RIGHT, 500 + HOLD_MS), Some(Gesture::Hold(Press::Next)));
+    }
+
+    #[test]
+    fn a_button_down_at_the_start_is_ignored_until_let_go() {
+        let mut h = Holds::ignoring(GREEN);
+        assert_eq!(h.poll(GREEN, 0), None);
+        assert_eq!(h.poll(GREEN, HOLD_MS * 2), None, "no hold either");
+        assert_eq!(h.poll(NONE, HOLD_MS * 2 + 10), None, "its release does nothing");
+        h.poll(GREEN, HOLD_MS * 3);
+        assert_eq!(h.poll(NONE, HOLD_MS * 3 + 100), Some(Gesture::Press(Press::Update)), "the next press counts");
+        let mut h = Holds::ignoring(NONE);
+        h.poll(RIGHT, 0);
+        assert_eq!(h.poll(RIGHT, HOLD_MS), Some(Gesture::Hold(Press::Next)));
     }
 
     #[test]

@@ -52,19 +52,20 @@ const HTML: &str = "text/html; charset=utf-8";
 
 /// One request: `GET /` is the page, `POST /save` saves the form. Returns
 /// the answer and, after a good save, the new text of the settings file.
-/// `config_text` is the file as it is now (empty if there is none).
-pub fn handle(method: &str, path: &str, body: &[u8], config_text: &str) -> (Response, Option<String>) {
+/// `config_text` is the file as it is now (empty if there is none);
+/// `wifi_needed`: the device's rule, settings without Wi-Fi are not saved.
+pub fn handle(method: &str, path: &str, body: &[u8], config_text: &str, wifi_needed: bool) -> (Response, Option<String>) {
     let path = path.split('?').next().unwrap_or("");
     match (method, path) {
         ("GET", "/" | "/index.html") => {
-            let message = match (config::parse_flat(config_text), Config::parse(config_text)) {
+            let message = match (config::parse_flat(config_text), Config::usable(config_text, wifi_needed)) {
                 (_, Ok(_)) => Message::None,
                 (Err(e), _) => Message::Error(format!("The settings file cannot be read ({e:#}); saving the form replaces it.")),
                 (Ok(_), Err(e)) => Message::Error(format!("The settings are not complete yet: {e:#}")),
             };
             (page(config_text, message), None)
         }
-        ("POST", "/save") => save(&decode_form(body), config_text),
+        ("POST", "/save") => save(&decode_form(body), config_text, wifi_needed),
         _ => (Response { status: 404, content_type: "text/plain; charset=utf-8", body: "Not found".into() }, None),
     }
 }
@@ -76,7 +77,7 @@ enum Message {
 }
 
 /// The form applied to the file; saved only if the result is valid.
-fn save(form: &[(String, String)], current: &str) -> (Response, Option<String>) {
+fn save(form: &[(String, String)], current: &str, wifi_needed: bool) -> (Response, Option<String>) {
     // a file that cannot be read at all is replaced by the form
     let readable = config::parse_flat(current).is_ok();
     let stored = config::parse_flat(current).unwrap_or_default();
@@ -111,7 +112,7 @@ fn save(form: &[(String, String)], current: &str) -> (Response, Option<String>) 
             Err(e) => return (page(current, Message::Error(format!("{e:#}"))), None),
         };
     }
-    match Config::parse(&text) {
+    match Config::usable(&text, wifi_needed) {
         Ok(_) => (page(&text, Message::Ok("Saved — press the green button on the device to finish.".into())), Some(text)),
         Err(e) => (page(&text, Message::Error(format!("Not saved: {e:#}"))), None),
     }
@@ -267,12 +268,12 @@ mod tests {
     }
 
     fn save(pairs: &[(&str, &str)]) -> (Response, Option<String>) {
-        handle("POST", "/save", &form(pairs), FILE)
+        handle("POST", "/save", &form(pairs), FILE, false)
     }
 
     #[test]
     fn the_page_shows_the_settings_but_no_secrets() {
-        let (r, saved) = handle("GET", "/", b"", FILE);
+        let (r, saved) = handle("GET", "/", b"", FILE, false);
         assert_eq!((r.status, r.content_type, saved), (200, "text/html; charset=utf-8", None));
         assert!(r.body.contains("value=\"https://photos.app.goo.gl/abc\""));
         assert!(r.body.contains("value=\"Tel Aviv\""));
@@ -353,17 +354,17 @@ mod tests {
     fn empty_optional_fields_remove_their_key() {
         let mut f = unchanged();
         f[3] = ("place_name", "Home");
-        let with = handle("POST", "/save", &form(&f), FILE).1.unwrap();
+        let with = handle("POST", "/save", &form(&f), FILE, false).1.unwrap();
         assert!(with.contains("place_name = \"Home\""));
         f[3] = ("place_name", "  ");
-        let without = handle("POST", "/save", &form(&f), &with).1.unwrap();
+        let without = handle("POST", "/save", &form(&f), &with, false).1.unwrap();
         assert!(!without.contains("place_name ="), "{without}");
     }
 
     #[test]
     fn a_broken_or_missing_file_still_opens_the_page() {
         for text in ["", "city = \"unclosed\n", "album_url = \"https://photos.app.goo.gl/abc\"\n"] {
-            let (r, _) = handle("GET", "/", b"", text);
+            let (r, _) = handle("GET", "/", b"", text, false);
             assert_eq!(r.status, 200);
             assert!(r.body.contains("<form"), "{text:?}");
             assert!(r.body.contains("class=\"msg error\""), "says what is wrong: {text:?}");
@@ -371,15 +372,27 @@ mod tests {
         let mut f = unchanged();
         f[6] = ("calendars", "");
         f[9] = ("wifi_password", "pw");
-        let saved = handle("POST", "/save", &form(&f), "city = \"unclosed\n").1.expect("a good form replaces a broken file");
+        let saved = handle("POST", "/save", &form(&f), "city = \"unclosed\n", false).1.expect("a good form replaces a broken file");
         assert_eq!(Config::parse(&saved).unwrap().city, "Tel Aviv");
+    }
+
+    #[test]
+    fn the_page_refuses_settings_without_wifi_on_the_device() {
+        let no_wifi = "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\n";
+        let (r, _) = handle("GET", "/", b"", no_wifi, true);
+        assert!(r.body.contains("not complete yet") && r.body.contains("wifi_ssid"), "{}", r.body);
+        let f: Vec<_> = unchanged().into_iter().map(|(k, v)| (k, if k == "wifi_ssid" { "" } else { v })).collect();
+        let (r, saved) = handle("POST", "/save", &form(&f), FILE, true);
+        assert!(saved.is_none() && r.body.contains("Not saved") && r.body.contains("wifi_ssid"), "{}", r.body);
+        assert!(handle("POST", "/save", &form(&f), FILE, false).1.is_some(), "the emulator does without");
+        assert!(handle("POST", "/save", &form(&unchanged()), FILE, true).1.is_some());
     }
 
     #[test]
     fn values_are_html_escaped() {
         assert_eq!(html_escape("<a href=\"x\">&'"), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;");
         let text = format!("{FILE}place_name = \"\\\"><script>\"\n");
-        let (r, _) = handle("GET", "/", b"", &text);
+        let (r, _) = handle("GET", "/", b"", &text, false);
         assert!(!r.body.contains("<script>") && r.body.contains("&quot;&gt;&lt;script&gt;"));
     }
 
@@ -393,8 +406,8 @@ mod tests {
 
     #[test]
     fn unknown_path_is_404() {
-        assert_eq!(handle("GET", "/favicon.ico", b"", FILE).0.status, 404);
-        assert_eq!(handle("POST", "/", b"", FILE).0.status, 404);
-        assert_eq!(handle("GET", "/?x=1", b"", FILE).0.status, 200, "a query is ignored");
+        assert_eq!(handle("GET", "/favicon.ico", b"", FILE, false).0.status, 404);
+        assert_eq!(handle("POST", "/", b"", FILE, false).0.status, 404);
+        assert_eq!(handle("GET", "/?x=1", b"", FILE, false).0.status, 200, "a query is ignored");
     }
 }

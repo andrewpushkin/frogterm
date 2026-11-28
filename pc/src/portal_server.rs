@@ -116,7 +116,7 @@ fn answer(mut stream: TcpStream, config_path: &Path) -> Result<bool> {
     }
     let body = &buf[head_end..head_end + length];
     let current = fs::read_to_string(config_path).unwrap_or_default();
-    let (response, saved) = portal::handle(method, target, body, &current);
+    let (response, saved) = portal::handle(method, target, body, &current, false);
     log::info!("settings page: {method} {} -> {}", target.split('?').next().unwrap_or(""), response.status);
     if let Some(text) = &saved {
         fs::write(config_path, text).with_context(|| format!("save {}", config_path.display()))?;
