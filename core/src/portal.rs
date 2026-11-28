@@ -29,10 +29,13 @@ enum Kind {
     Secret,
     /// `Lines`, with secret links shown as placeholders.
     Calendars,
+    /// A checkbox (on by default): the page sends a hidden "off" and, when
+    /// ticked, "on" after it.
+    Bool,
 }
 
 /// Every setting on the page, in its order.
-const FIELDS: [(&str, Kind); 13] = [
+const FIELDS: [(&str, Kind); 14] = [
     ("album_url", Kind::Text),
     ("timezone", Kind::Text),
     ("city", Kind::Text),
@@ -46,6 +49,7 @@ const FIELDS: [(&str, Kind); 13] = [
     ("update_times", Kind::Lines),
     ("photo_batch", Kind::Number),
     ("refresh_minutes", Kind::Number),
+    ("auto_update", Kind::Bool),
 ];
 
 const HTML: &str = "text/html; charset=utf-8";
@@ -99,8 +103,13 @@ fn save(form: &[(String, String)], current: &str, host: &Host) -> (Response, Opt
     let stored = config::parse_flat(current).unwrap_or_default();
     let mut text = if readable { current.to_string() } else { String::new() };
     for &(key, kind) in &FIELDS {
-        let Some(input) = form.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()) else { continue };
+        // a checkbox's last value counts (the hidden "off" comes first)
+        let input = if kind == Kind::Bool { form.iter().rev().find(|(k, _)| k == key) } else { form.iter().find(|(k, _)| k == key) };
+        let Some(input) = input.map(|(_, v)| v.as_str()) else { continue };
         let value = match kind {
+            // on, as by default, and not written yet: the file stays as it is
+            Kind::Bool if input == "on" && !stored.iter().any(|(k, _)| k == key) => continue,
+            Kind::Bool => Some(Value::Bool(input == "on")),
             Kind::Secret if input.is_empty() => continue,
             Kind::Secret => Some(Value::Str(input.to_string())),
             Kind::Text => Some(input.trim()).filter(|s| !s.is_empty()).map(|s| Value::Str(s.to_string())),
@@ -180,6 +189,7 @@ fn page(text: &str, host: &Host, message: Message) -> Response {
             }
             (_, Some(Value::List(l))) => l.join("\n"),
             (_, Some(Value::Str(s) | Value::Num(s))) => s.clone(),
+            (_, Some(Value::Bool(b))) => b.to_string(),
         }
     };
     let (class, msg) = match &message {
@@ -191,6 +201,7 @@ fn page(text: &str, host: &Host, message: Message) -> Response {
         "message" => html_escape(msg),
         "message_class" => class.to_string(),
         "firmware_version" => html_escape(host.firmware),
+        "auto_update_checked" => if matches!(get("auto_update"), Some(Value::Bool(false))) { "" } else { "checked" }.to_string(),
         "wifi_password_hint" => if get("wifi_password").is_some() { "unchanged" } else { "not set" }.to_string(),
         key => html_escape(&field(key)),
     });
@@ -425,6 +436,22 @@ mod tests {
         assert!(r.body.contains("type=\"file\"") && r.body.contains("/update"), "the upload box");
         let (r, _) = handle("GET", "/", b"", FILE, &Host { wifi_needed: false, firmware: "<x>" });
         assert!(r.body.contains("frogterm &lt;x&gt;"), "escaped");
+    }
+
+    #[test]
+    fn auto_update_is_a_checkbox_on_by_default() {
+        let (r, _) = handle("GET", "/", b"", FILE, &host(true));
+        assert!(r.body.contains("name=\"auto_update\" value=\"on\" checked"), "on when not set");
+        // the browser sends the hidden "off" and, when ticked, "on" after it
+        let ticked = [unchanged(), vec![("auto_update", "off"), ("auto_update", "on")]].concat();
+        assert_eq!(save(&ticked).1.unwrap(), FILE, "on and not set: the file stays as it is");
+        let off = [unchanged(), vec![("auto_update", "off")]].concat();
+        let text = save(&off).1.unwrap();
+        assert!(text.contains("auto_update = false"), "{text}");
+        let (r, _) = handle("GET", "/", b"", &text, &host(true));
+        assert!(r.body.contains("name=\"auto_update\" value=\"on\" >"), "shown off");
+        let on_again = handle("POST", "/save", &form(&ticked), &text, &host(true)).1.unwrap();
+        assert!(on_again.contains("auto_update = true"), "{on_again}");
     }
 
     #[test]

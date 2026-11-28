@@ -8,6 +8,20 @@ use anyhow::{bail, Result};
 pub const MAX_IMAGE: usize = 0x30_0000;
 /// Every frogterm firmware contains `<frogterm-version:N>`.
 pub const VERSION_PREFIX: &[u8] = b"<frogterm-version:";
+/// Where CI publishes each release (GitHub Pages): `version.txt` (the
+/// release number) and `firmware.bin`.
+pub const UPDATE_SITE: &str = "https://andrewpushkin.github.io/frogterm/";
+
+/// Should a firmware of version `running` install the published `latest`?
+/// Only a release (a number) updates itself, and only to a higher number;
+/// a local build ("dev") stays as it is.
+pub fn newer(running: &str, latest: &str) -> bool {
+    match (running.trim().parse::<u32>(), latest.trim().parse::<u32>()) {
+        (Ok(r), Ok(l)) => l > r,
+        _ => false,
+    }
+}
+
 /// Bytes `check_header` needs.
 pub const HEADER_LEN: usize = 36;
 
@@ -109,6 +123,18 @@ mod tests {
         let tag = format!("<frogterm-version:{version}>");
         b[3000..3000 + tag.len()].copy_from_slice(tag.as_bytes());
         b
+    }
+
+    #[test]
+    fn only_a_release_updates_itself_to_a_newer_one() {
+        assert!(newer("85", "86"));
+        assert!(newer("85", " 100\n"), "version.txt may end with a newline");
+        assert!(!newer("85", "85"));
+        assert!(!newer("86", "85"), "never back");
+        assert!(!newer("dev", "86"), "a local build stays");
+        assert!(!newer("dev-1a2b3c", "86"));
+        assert!(!newer("85", "<html>"), "garbage is no version");
+        assert!(UPDATE_SITE.starts_with("https://") && UPDATE_SITE.ends_with('/'));
     }
 
     #[test]

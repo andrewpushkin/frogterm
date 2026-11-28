@@ -1,7 +1,8 @@
 //! `config.toml`: every setting of the device, read when it runs (the
 //! emulator's file, the device's copy in NVS) and rewritten by the settings
 //! page. A small reader for the file's flat shape — `key = "text"`, numbers,
-//! lists of text, `#` comments — so the device needs no TOML crate.
+//! `true`/`false`, lists of text, `#` comments — so the device needs no TOML
+//! crate.
 
 use std::path::Path;
 
@@ -13,6 +14,7 @@ pub enum Value {
     Str(String),
     /// A number, kept as written.
     Num(String),
+    Bool(bool),
     List(Vec<String>),
 }
 
@@ -147,7 +149,18 @@ impl Reader<'_> {
                 }
                 Ok(Value::Num(n))
             }
-            _ => self.fail("expected a value: \"text\", a number or a [list]"),
+            Some(b't' | b'f') => {
+                let start = self.pos;
+                while self.peek().is_some_and(|c| c.is_ascii_alphanumeric()) {
+                    self.bump();
+                }
+                match &self.text[start..self.pos] {
+                    "true" => Ok(Value::Bool(true)),
+                    "false" => Ok(Value::Bool(false)),
+                    _ => self.fail("expected a value: \"text\", a number, true, false or a [list]"),
+                }
+            }
+            _ => self.fail("expected a value: \"text\", a number, true, false or a [list]"),
         }
     }
 
@@ -234,6 +247,7 @@ pub fn format_value(value: &Value) -> String {
     match value {
         Value::Str(s) => quote(s),
         Value::Num(n) => n.clone(),
+        Value::Bool(b) => b.to_string(),
         Value::List(items) => match items.as_slice() {
             [] => "[]".to_string(),
             [one] => format!("[{}]", quote(one)),
@@ -289,6 +303,9 @@ pub struct Config {
     pub refresh_minutes: u32,
     /// Local time zone as a POSIX TZ string (default: Israel).
     pub timezone: String,
+    /// Device only: every sync checks for a newer frogterm release and
+    /// installs it (default on).
+    pub auto_update: bool,
 }
 
 fn default_times() -> Vec<String> {
@@ -311,6 +328,13 @@ impl Config {
                 None => Ok(None),
                 Some(Value::List(l)) => Ok(Some(l.clone())),
                 Some(_) => bail!("{key} must be a list like [\"a\", \"b\"]"),
+            }
+        };
+        let boolean = |key: &str| -> Result<Option<bool>> {
+            match get(key) {
+                None => Ok(None),
+                Some(Value::Bool(b)) => Ok(Some(*b)),
+                Some(_) => bail!("{key} must be true or false (without quotes)"),
             }
         };
         fn num<T: std::str::FromStr>(key: &str, v: Option<&Value>) -> Result<Option<T>> {
@@ -337,6 +361,7 @@ impl Config {
             photo_batch: num("photo_batch", get("photo_batch"))?.unwrap_or(10),
             refresh_minutes: num("refresh_minutes", get("refresh_minutes"))?.unwrap_or(480),
             timezone: text("timezone")?.unwrap_or_else(|| crate::tz::ISRAEL.to_string()),
+            auto_update: boolean("auto_update")?.unwrap_or(true),
         };
         c.check()?;
         Ok(c)
@@ -417,6 +442,24 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn true_and_false_parse_and_write_back() {
+        let text = "a = true\nb = false # off\n";
+        assert_eq!(parse_flat(text).unwrap(), vec![("a".into(), Value::Bool(true)), ("b".into(), Value::Bool(false))]);
+        assert_eq!(format_value(&Value::Bool(false)), "false");
+        assert_eq!(set(text, "a", Some(&Value::Bool(false))).unwrap(), "a = false\nb = false # off\n");
+        assert!(parse_flat("a = yes\n").is_err(), "only true and false");
+    }
+
+    #[test]
+    fn auto_update_is_on_unless_turned_off() {
+        let base = "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\n";
+        assert!(Config::parse(base).unwrap().auto_update, "on by default");
+        assert!(!Config::parse(&format!("{base}auto_update = false\n")).unwrap().auto_update);
+        let e = Config::parse(&format!("{base}auto_update = \"no\"\n")).unwrap_err();
+        assert!(format!("{e:#}").contains("auto_update"), "{e:#}");
+    }
 
     #[test]
     fn the_device_needs_its_wifi() {

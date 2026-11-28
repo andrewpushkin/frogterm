@@ -62,3 +62,8 @@ wifi_password = "your-wifi-password"
 
 # Weather/calendar younger than this are reused without Wi-Fi (max 1080). Default 480 (8 h).
 # refresh_minutes = 480
+
+# Every sync checks for a newer frogterm release (GitHub) and installs it; it
+# starts at the next wake, and one that does not work is rolled back by
+# itself. Only release firmware updates itself (a local build stays). Default true.
+# auto_update = true
