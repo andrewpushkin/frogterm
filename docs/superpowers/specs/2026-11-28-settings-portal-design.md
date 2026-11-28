@@ -60,14 +60,16 @@ first, the firmware follows.
 
 ### Buttons
 
-- A press now acts **on release**, so a hold can be told from a press. A press
-  shorter than 10 s does exactly what it does today (green: sync; side buttons:
-  browse).
-- Held **10 s**: a distinct beep the moment it counts (the finger can come
-  off), then settings mode. Green → access point; Right → Wi-Fi client. A long
-  hold of Left does nothing new (a normal press on release).
+- **Every button works on release** (owner): nothing happens while a button
+  is down — the press chirp, the busy pips, the action all come when it is let
+  go. A press shorter than 10 s then does exactly what it does today (green:
+  sync; side buttons: browse).
+- Released after **10 s or more**: settings mode (with the press chirp, on
+  release like every press). Green → access point; Right → Wi-Fi client. A
+  long hold of Left is a normal Left press. No beep at the 10-s mark.
 - Waking from deep sleep works the same: the press wakes the chip, the
-  firmware watches the pin until release or 10 s.
+  firmware waits for the release and measures the hold. A button still down
+  after 60 s (stuck, or lying on it) counts as released then.
 
 ### Settings mode
 
