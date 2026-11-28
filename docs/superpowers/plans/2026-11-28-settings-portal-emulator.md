@@ -108,6 +108,7 @@
 
 - Window: button levels from the mouse (held over a button) and keys (Left; Right; Space/Enter/G) fed to `Holds` every frame; gestures replace presses on the channel (`Sender<Gesture>`). While the device is awake: `Press` → busy pips (`app::press_while_awake`), `Hold` likewise — except in settings mode (`Shared::set_settings(bool)`), where a green `Press` goes to the device and others get the pips. The bar says "settings mode" then.
 - Device thread: `Press(p)` → `Wake::Button(p)` as today. `Hold(p)` → `via_for(p)`: AccessPoint shows `AP_SSID` and `http://localhost:<port>/`; HomeWifi shows `wifi_ssid` (or "this PC's network") and `http://<lan_address>:<port>/`; `open_settings`, then `serve_once` in a loop until a green press or `SETTINGS_IDLE_SECS` without a request; then reload `Config` (and `tz::set_zone`) and run the green wake.
+- **Settings empty → settings mode at start** (owner): a missing, empty or invalid `--config` file → the emulator starts in access-point settings mode instead of failing; a green press while the file is still unusable keeps settings mode (error beep).
 - `--once hold-green` / `--once hold-next`: open settings, save `out/screen.png` + `out/window.png`, exit without serving.
 - [ ] Unit test the window's gesture routing as a pure fn `route(g: Gesture, busy: bool, settings: bool) -> Route { Send, BusyPips }`.
 - [ ] Manual: `make emulator`, hold Green 10 s → screen, open the page, change `overlay_opacity`, Save, press Green → sync with the new look; `config.toml` comments still there.

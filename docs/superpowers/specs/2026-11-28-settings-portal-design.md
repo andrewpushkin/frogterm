@@ -112,7 +112,11 @@ first, the firmware follows.
 - **Emulator**: the `--config` file (default `config.toml`), read at every
   wake and rewritten by the page.
 - **Device**: the same text in NVS (blob `config`, a few KB, wear-levelled).
-  No file → access-point settings mode at power-on.
+- **Settings empty → settings mode at start** (owner): no file, an empty one,
+  or one the validator refuses (my call: the device cannot run on it either)
+  → access-point settings mode at power-on, on the device and in the
+  emulator. Leaving it with green while the settings are still unusable
+  stays in settings mode (error beep).
 - Writing **keeps the file's own lines**: a changed key's value is replaced in
   place, comments and order stay; a key that was missing is appended; a key
   set back to its default stays written (simple, explicit).
