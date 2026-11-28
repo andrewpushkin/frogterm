@@ -22,6 +22,9 @@
   .msg:empty { display: none; }
   .ok { background: #2a9d4a22; border: 1px solid var(--accent); }
   .error { background: #d6282822; border: 1px solid #d62828; }
+  .firmware { margin-top: 1.5rem; } .firmware p { margin: .5rem 0; }
+  .firmware button { margin-top: .8rem; }
+  button:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
 <body>
@@ -96,5 +99,37 @@
 
   <button type="submit">Save</button>
 </form>
+
+<fieldset class="firmware">
+  <legend>Firmware</legend>
+  <p>Running: frogterm {{firmware_version}}</p>
+  <label>New firmware
+    <small>firmware.bin of a release (github.com/andrewpushkin/frogterm/releases), not firmware-full.bin.
+    Settings and stored photos stay.</small>
+    <input type="file" id="fw" accept=".bin">
+  </label>
+  <button type="button" id="fw-go">Install</button>
+  <p class="msg" id="fw-status"></p>
+</fieldset>
+<script>
+// the one script of the page: sends the file as the request body, with progress
+document.getElementById('fw-go').onclick = function () {
+  var file = document.getElementById('fw').files[0], status = document.getElementById('fw-status');
+  var say = function (cls, text) { status.className = 'msg ' + cls; status.textContent = text; };
+  if (!file) { say('error', 'Choose firmware.bin first.'); return; }
+  var x = new XMLHttpRequest();
+  x.open('POST', '/update');
+  x.setRequestHeader('Content-Type', 'application/octet-stream');
+  x.upload.onprogress = function (e) {
+    if (e.lengthComputable) say('', e.loaded < e.total ? 'Uploading… ' + Math.round(100 * e.loaded / e.total) + ' %' : 'Checking and installing…');
+  };
+  x.onload = function () { say(x.status == 200 ? 'ok' : 'error', x.responseText); };
+  x.onerror = function () { say('error', 'The upload stopped: the connection to the device was lost.'); };
+  this.disabled = true;
+  x.onloadend = function () { document.getElementById('fw-go').disabled = false; };
+  say('', 'Uploading…');
+  x.send(file);
+};
+</script>
 </body>
 </html>

@@ -50,11 +50,21 @@ const FIELDS: [(&str, Kind); 13] = [
 
 const HTML: &str = "text/html; charset=utf-8";
 
+/// Who serves the page.
+#[derive(Debug, Clone, Copy)]
+pub struct Host<'a> {
+    /// The device's rule: settings without Wi-Fi are not saved.
+    pub wifi_needed: bool,
+    /// The running firmware's version, shown on the page.
+    pub firmware: &'a str,
+}
+
 /// One request: `GET /` is the page, `POST /save` saves the form. Returns
 /// the answer and, after a good save, the new text of the settings file.
-/// `config_text` is the file as it is now (empty if there is none);
-/// `wifi_needed`: the device's rule, settings without Wi-Fi are not saved.
-pub fn handle(method: &str, path: &str, body: &[u8], config_text: &str, wifi_needed: bool) -> (Response, Option<String>) {
+/// `config_text` is the file as it is now (empty if there is none).
+/// (`POST /update`, the firmware upload, is the server's own.)
+pub fn handle(method: &str, path: &str, body: &[u8], config_text: &str, host: &Host) -> (Response, Option<String>) {
+    let wifi_needed = host.wifi_needed;
     let path = path.split('?').next().unwrap_or("");
     match (method, path) {
         ("GET", "/" | "/index.html") => {
@@ -63,17 +73,17 @@ pub fn handle(method: &str, path: &str, body: &[u8], config_text: &str, wifi_nee
                 (Err(e), _) => Message::Error(format!("The settings file cannot be read ({e:#}); saving the form replaces it.")),
                 (Ok(_), Err(e)) => Message::Error(format!("The settings are not complete yet: {e:#}")),
             };
-            (page(config_text, message), None)
+            (page(config_text, host, message), None)
         }
-        ("POST", "/save") => save(&decode_form(body), config_text, wifi_needed),
+        ("POST", "/save") => save(&decode_form(body), config_text, host),
         _ => (Response { status: 404, content_type: "text/plain; charset=utf-8", body: "Not found".into() }, None),
     }
 }
 
 /// The answer when a good save could not be stored (e.g. no space left):
 /// the form as sent, with the reason; nothing was saved.
-pub fn store_failed(new_text: &str, why: &str) -> Response {
-    page(new_text, Message::Error(format!("Not saved: the device could not store the settings ({why}). Try again.")))
+pub fn store_failed(new_text: &str, why: &str, host: &Host) -> Response {
+    page(new_text, host, Message::Error(format!("Not saved: the device could not store the settings ({why}). Try again.")))
 }
 
 enum Message {
@@ -83,7 +93,7 @@ enum Message {
 }
 
 /// The form applied to the file; saved only if the result is valid.
-fn save(form: &[(String, String)], current: &str, wifi_needed: bool) -> (Response, Option<String>) {
+fn save(form: &[(String, String)], current: &str, host: &Host) -> (Response, Option<String>) {
     // a file that cannot be read at all is replaced by the form
     let readable = config::parse_flat(current).is_ok();
     let stored = config::parse_flat(current).unwrap_or_default();
@@ -115,12 +125,12 @@ fn save(form: &[(String, String)], current: &str, wifi_needed: bool) -> (Respons
         };
         text = match config::set(&text, key, value.as_ref()) {
             Ok(t) => t,
-            Err(e) => return (page(current, Message::Error(format!("{e:#}"))), None),
+            Err(e) => return (page(current, host, Message::Error(format!("{e:#}"))), None),
         };
     }
-    match Config::usable(&text, wifi_needed) {
-        Ok(_) => (page(&text, Message::Ok("Saved — press the green button on the device to finish.".into())), Some(text)),
-        Err(e) => (page(&text, Message::Error(format!("Not saved: {e:#}"))), None),
+    match Config::usable(&text, host.wifi_needed) {
+        Ok(_) => (page(&text, host, Message::Ok("Saved — press the green button on the device to finish.".into())), Some(text)),
+        Err(e) => (page(&text, host, Message::Error(format!("Not saved: {e:#}"))), None),
     }
 }
 
@@ -146,7 +156,7 @@ fn placeholder_number(line: &str) -> Option<usize> {
 }
 
 /// The page with the settings of `text` filled in.
-fn page(text: &str, message: Message) -> Response {
+fn page(text: &str, host: &Host, message: Message) -> Response {
     let entries = config::parse_flat(text).unwrap_or_default();
     let get = |key: &str| entries.iter().find(|(k, _)| k == key).map(|(_, v)| v);
     let field = |key: &str| -> String {
@@ -180,6 +190,7 @@ fn page(text: &str, message: Message) -> Response {
     let body = fill(PAGE, |name| match name {
         "message" => html_escape(msg),
         "message_class" => class.to_string(),
+        "firmware_version" => html_escape(host.firmware),
         "wifi_password_hint" => if get("wifi_password").is_some() { "unchanged" } else { "not set" }.to_string(),
         key => html_escape(&field(key)),
     });
@@ -250,6 +261,10 @@ mod tests {
         wifi_password = \"PASSWORD1\"\n\
         # photo_batch = 10\n";
 
+    fn host(wifi_needed: bool) -> Host<'static> {
+        Host { wifi_needed, firmware: "85" }
+    }
+
     fn form(pairs: &[(&str, &str)]) -> Vec<u8> {
         pairs.iter().map(|(k, v)| format!("{k}={}", crate::url::percent_encode(v))).collect::<Vec<_>>().join("&").into_bytes()
     }
@@ -274,12 +289,12 @@ mod tests {
     }
 
     fn save(pairs: &[(&str, &str)]) -> (Response, Option<String>) {
-        handle("POST", "/save", &form(pairs), FILE, false)
+        handle("POST", "/save", &form(pairs), FILE, &host(false))
     }
 
     #[test]
     fn the_page_shows_the_settings_but_no_secrets() {
-        let (r, saved) = handle("GET", "/", b"", FILE, false);
+        let (r, saved) = handle("GET", "/", b"", FILE, &host(false));
         assert_eq!((r.status, r.content_type, saved), (200, "text/html; charset=utf-8", None));
         assert!(r.body.contains("value=\"https://photos.app.goo.gl/abc\""));
         assert!(r.body.contains("value=\"Tel Aviv\""));
@@ -360,17 +375,17 @@ mod tests {
     fn empty_optional_fields_remove_their_key() {
         let mut f = unchanged();
         f[3] = ("place_name", "Home");
-        let with = handle("POST", "/save", &form(&f), FILE, false).1.unwrap();
+        let with = handle("POST", "/save", &form(&f), FILE, &host(false)).1.unwrap();
         assert!(with.contains("place_name = \"Home\""));
         f[3] = ("place_name", "  ");
-        let without = handle("POST", "/save", &form(&f), &with, false).1.unwrap();
+        let without = handle("POST", "/save", &form(&f), &with, &host(false)).1.unwrap();
         assert!(!without.contains("place_name ="), "{without}");
     }
 
     #[test]
     fn a_broken_or_missing_file_still_opens_the_page() {
         for text in ["", "city = \"unclosed\n", "album_url = \"https://photos.app.goo.gl/abc\"\n"] {
-            let (r, _) = handle("GET", "/", b"", text, false);
+            let (r, _) = handle("GET", "/", b"", text, &host(false));
             assert_eq!(r.status, 200);
             assert!(r.body.contains("<form"), "{text:?}");
             assert!(r.body.contains("class=\"msg error\""), "says what is wrong: {text:?}");
@@ -378,37 +393,46 @@ mod tests {
         let mut f = unchanged();
         f[6] = ("calendars", "");
         f[9] = ("wifi_password", "pw");
-        let saved = handle("POST", "/save", &form(&f), "city = \"unclosed\n", false).1.expect("a good form replaces a broken file");
+        let saved = handle("POST", "/save", &form(&f), "city = \"unclosed\n", &host(false)).1.expect("a good form replaces a broken file");
         assert_eq!(Config::parse(&saved).unwrap().city, "Tel Aviv");
     }
 
     #[test]
     fn the_page_refuses_settings_without_wifi_on_the_device() {
         let no_wifi = "album_url = \"https://photos.app.goo.gl/abc\"\ncity = \"Tel Aviv\"\n";
-        let (r, _) = handle("GET", "/", b"", no_wifi, true);
+        let (r, _) = handle("GET", "/", b"", no_wifi, &host(true));
         assert!(r.body.contains("not complete yet") && r.body.contains("wifi_ssid"), "{}", r.body);
         let f: Vec<_> = unchanged().into_iter().map(|(k, v)| (k, if k == "wifi_ssid" { "" } else { v })).collect();
-        let (r, saved) = handle("POST", "/save", &form(&f), FILE, true);
+        let (r, saved) = handle("POST", "/save", &form(&f), FILE, &host(true));
         assert!(saved.is_none() && r.body.contains("Not saved") && r.body.contains("wifi_ssid"), "{}", r.body);
-        assert!(handle("POST", "/save", &form(&f), FILE, false).1.is_some(), "the emulator does without");
-        assert!(handle("POST", "/save", &form(&unchanged()), FILE, true).1.is_some());
+        assert!(handle("POST", "/save", &form(&f), FILE, &host(false)).1.is_some(), "the emulator does without");
+        assert!(handle("POST", "/save", &form(&unchanged()), FILE, &host(true)).1.is_some());
     }
 
     #[test]
     fn a_save_the_device_could_not_store_says_so_and_keeps_the_form() {
         let (_, saved) = save(&unchanged().into_iter().map(|(k, v)| (k, if k == "city" { "Haifa" } else { v })).collect::<Vec<_>>());
-        let r = store_failed(&saved.unwrap(), "no space");
+        let r = store_failed(&saved.unwrap(), "no space", &host(true));
         assert!(r.body.contains("Not saved") && r.body.contains("no space") && !r.body.contains("Saved —"), "{}", r.body);
         assert!(r.body.contains("value=\"Haifa\""), "the form keeps what was typed");
         assert!(!r.body.contains("PASSWORD1") && !r.body.contains("SECRET1"));
     }
 
     #[test]
+    fn the_page_shows_the_firmware_and_the_upload_box() {
+        let (r, _) = handle("GET", "/", b"", FILE, &Host { wifi_needed: true, firmware: "85" });
+        assert!(r.body.contains("frogterm 85"), "the running version");
+        assert!(r.body.contains("type=\"file\"") && r.body.contains("/update"), "the upload box");
+        let (r, _) = handle("GET", "/", b"", FILE, &Host { wifi_needed: false, firmware: "<x>" });
+        assert!(r.body.contains("frogterm &lt;x&gt;"), "escaped");
+    }
+
+    #[test]
     fn values_are_html_escaped() {
         assert_eq!(html_escape("<a href=\"x\">&'"), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;");
         let text = format!("{FILE}place_name = \"\\\"><script>\"\n");
-        let (r, _) = handle("GET", "/", b"", &text, false);
-        assert!(!r.body.contains("<script>") && r.body.contains("&quot;&gt;&lt;script&gt;"));
+        let (r, _) = handle("GET", "/", b"", &text, &host(false));
+        assert!(!r.body.contains("\"><script>") && r.body.contains("&quot;&gt;&lt;script&gt;"), "the injected value is escaped");
     }
 
     #[test]
@@ -421,8 +445,8 @@ mod tests {
 
     #[test]
     fn unknown_path_is_404() {
-        assert_eq!(handle("GET", "/favicon.ico", b"", FILE, false).0.status, 404);
-        assert_eq!(handle("POST", "/", b"", FILE, false).0.status, 404);
-        assert_eq!(handle("GET", "/?x=1", b"", FILE, false).0.status, 200, "a query is ignored");
+        assert_eq!(handle("GET", "/favicon.ico", b"", FILE, &host(false)).0.status, 404);
+        assert_eq!(handle("POST", "/", b"", FILE, &host(false)).0.status, 404);
+        assert_eq!(handle("GET", "/?x=1", b"", FILE, &host(false)).0.status, 200, "a query is ignored");
     }
 }

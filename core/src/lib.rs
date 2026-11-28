@@ -11,6 +11,7 @@ pub mod config;
 pub mod date;
 pub mod dither;
 pub mod epd;
+pub mod firmware;
 pub mod framebuf;
 pub mod info;
 pub mod jpeg;

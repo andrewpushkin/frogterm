@@ -22,6 +22,8 @@ use crate::net::Net;
 
 /// Requests (the form) larger than this are refused.
 const MAX_BODY: usize = 16 * 1024;
+/// The device's side of the page: it needs its Wi-Fi settings.
+const HOST: portal::Host = portal::Host { wifi_needed: true, firmware: env!("FT_VERSION") };
 
 enum Network {
     AccessPoint(BlockingWifi<EspWifi<'static>>),
@@ -145,13 +147,13 @@ fn answer(mut req: Request<&mut EspHttpConnection<'_>>, nvs_part: &EspDefaultNvs
     }
     let nvs = EspNvs::new(nvs_part.clone(), "frogterm", true)?;
     let current = crate::settings::load_text(&nvs).unwrap_or_default();
-    let (mut response, saved) = portal::handle(method, &uri, &body, &current, true);
+    let (mut response, saved) = portal::handle(method, &uri, &body, &current, &HOST);
     if let Some(text) = saved {
         match crate::settings::save_text(&nvs, &text) {
             Ok(()) => log::info!("settings saved"),
             Err(e) => {
                 log::warn!("{e:#}");
-                response = portal::store_failed(&text, &format!("{:#}", e.root_cause()));
+                response = portal::store_failed(&text, &format!("{:#}", e.root_cause()), &HOST);
             }
         }
     }

@@ -10,10 +10,12 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use frogterm_core::portal;
+use frogterm_core::{firmware, portal};
 
 /// Requests (headers and body) larger than this are refused.
 const MAX_REQUEST: usize = 16 * 1024;
+/// The emulator's side of the page: no Wi-Fi needed, no firmware of its own.
+const HOST: portal::Host = portal::Host { wifi_needed: false, firmware: "emulator" };
 /// A client that sends nothing for this long is dropped.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -104,7 +106,10 @@ fn answer(mut stream: TcpStream, config_path: &Path) -> Result<bool> {
         .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
         .and_then(|(_, v)| v.trim().parse().ok())
         .unwrap_or(0);
-    if head_end + length > MAX_REQUEST {
+    let upload = method == "POST" && target.split('?').next() == Some("/update");
+    // a firmware upload may be as large as a firmware; everything else is a form
+    let limit = if upload { head_end + firmware::MAX_IMAGE } else { MAX_REQUEST };
+    if head_end + length > limit {
         return refuse(stream, 413, "Request Too Large");
     }
     while buf.len() < head_end + length {
@@ -115,8 +120,18 @@ fn answer(mut stream: TcpStream, config_path: &Path) -> Result<bool> {
         buf.extend_from_slice(&chunk[..n]);
     }
     let body = &buf[head_end..head_end + length];
+    if upload {
+        // checked as the device checks it; the PC has no firmware to replace
+        let (status, text) = match firmware::check_image(body) {
+            Ok(v) => (200, format!("frogterm {v}: a good firmware for the device. The emulator installs nothing.")),
+            Err(e) => (400, format!("Not installed: {e:#}.")),
+        };
+        log::info!("settings page: POST /update ({} KB) -> {status}", body.len() / 1024);
+        send(&mut stream, status, "text/plain; charset=utf-8", text.as_bytes())?;
+        return Ok(false);
+    }
     let current = fs::read_to_string(config_path).unwrap_or_default();
-    let (response, saved) = portal::handle(method, target, body, &current, false);
+    let (response, saved) = portal::handle(method, target, body, &current, &HOST);
     log::info!("settings page: {method} {} -> {}", target.split('?').next().unwrap_or(""), response.status);
     if let Some(text) = &saved {
         fs::write(config_path, text).with_context(|| format!("save {}", config_path.display()))?;
@@ -147,6 +162,7 @@ fn refuse(mut stream: TcpStream, status: u16, text: &str) -> Result<bool> {
 fn send(stream: &mut TcpStream, status: u16, content_type: &str, body: &[u8]) -> Result<()> {
     let reason = match status {
         200 => "OK",
+        400 => "Bad Request",
         404 => "Not Found",
         413 => "Payload Too Large",
         _ => "Error",
@@ -228,6 +244,43 @@ mod tests {
         assert!(answer.contains("Saved"), "{answer}");
         assert_eq!(served, Served::Saved);
         assert_eq!(fs::read_to_string(&path).unwrap(), FILE.replace("Tel Aviv", "Haifa"));
+    }
+
+    /// A frogterm app image of `len` bytes (larger than the form limit).
+    fn firmware(len: usize, full_image: bool) -> Vec<u8> {
+        let mut b = vec![0u8; len];
+        b[0] = 0xE9;
+        b[12] = 9;
+        if !full_image {
+            b[32..36].copy_from_slice(&0xABCD_5432u32.to_le_bytes());
+        }
+        let tag = b"<frogterm-version:85>";
+        b[len - 100..len - 100 + tag.len()].copy_from_slice(tag);
+        b
+    }
+
+    fn upload(path: &Path, body: Vec<u8>) -> (String, Served) {
+        let mut req = format!("POST /update HTTP/1.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n", body.len())
+            .into_bytes();
+        req.extend(body);
+        exchange(path, req)
+    }
+
+    #[test]
+    fn an_uploaded_firmware_is_checked_but_not_installed() {
+        let path = scratch("update");
+        let (answer, served) = upload(&path, firmware(200 * 1024, false));
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(answer.contains("frogterm 85") && answer.contains("installs nothing"), "{answer}");
+        assert_eq!(served, Served::Request);
+        assert_eq!(fs::read_to_string(&path).unwrap(), FILE, "the settings untouched");
+    }
+
+    #[test]
+    fn a_wrong_firmware_file_is_refused_with_why() {
+        let path = scratch("update-full");
+        let (answer, _) = upload(&path, firmware(50 * 1024, true));
+        assert!(answer.starts_with("HTTP/1.1 400") && answer.contains("firmware-full.bin"), "{answer}");
     }
 
     #[test]
