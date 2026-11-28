@@ -110,17 +110,15 @@ pub enum Detail {
 
 /// From this wind speed on (Beaufort 5, "fresh breeze") the wind is shown.
 pub const WIND_STRONG_KMH: f32 = 30.0;
-/// Humidity at or below this is shown (dry air).
-pub const HUMIDITY_LOW_PCT: u8 = 30;
-/// Humidity at or above this is shown (muggy air).
-pub const HUMIDITY_HIGH_PCT: u8 = 80;
+/// Normal humidity (owner): values outside it are shown.
+pub const HUMIDITY_NORMAL_PCT: std::ops::RangeInclusive<u8> = 50..=75;
 
 /// The tab's values, only those out of the ordinary: strong wind, low or
 /// high humidity (no precipitation: the box's columns show it already).
 pub fn details(slot: &HourSlot) -> Vec<Detail> {
     let humidity = slot
         .humidity_pct
-        .filter(|&h| h <= HUMIDITY_LOW_PCT || h >= HUMIDITY_HIGH_PCT)
+        .filter(|h| !HUMIDITY_NORMAL_PCT.contains(h))
         .map(|h| Detail::Humidity(format!("{h}%")));
     let wind = slot.wind_kmh.filter(|&w| w >= WIND_STRONG_KMH).map(|w| Detail::Wind(format!("{} km/h", w.round() as i32)));
     humidity.into_iter().chain(wind).collect()
@@ -767,12 +765,12 @@ mod tests {
     fn tab_shows_only_unusual_values() {
         let h = |s: &str| Detail::Humidity(s.into());
         let w = |s: &str| Detail::Wind(s.into());
-        assert_eq!(details(&ahead(Some(61), Some(11.0))), [], "usual humidity, light wind: no tab");
-        assert_eq!(details(&ahead(Some(79), Some(29.9))), []);
-        assert_eq!(details(&ahead(Some(31), Some(0.0))), []);
-        assert_eq!(details(&ahead(Some(30), Some(12.0))), [h("30%")], "dry");
-        assert_eq!(details(&ahead(Some(80), Some(12.0))), [h("80%")], "muggy");
-        assert_eq!(details(&ahead(Some(50), Some(35.0))), [w("35 km/h")], "windy");
+        assert_eq!(details(&ahead(Some(61), Some(11.0))), [], "normal humidity, light wind: no tab");
+        assert_eq!(details(&ahead(Some(75), Some(29.9))), []);
+        assert_eq!(details(&ahead(Some(50), Some(0.0))), []);
+        assert_eq!(details(&ahead(Some(49), Some(12.0))), [h("49%")], "dry");
+        assert_eq!(details(&ahead(Some(76), Some(12.0))), [h("76%")], "muggy");
+        assert_eq!(details(&ahead(Some(60), Some(35.0))), [w("35 km/h")], "windy");
     }
 
     #[test]
