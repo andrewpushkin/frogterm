@@ -5,3 +5,7 @@ phy_init, data, phy,       0xf000,   0x1000
 factory,  app,  factory,   0x10000,  0x300000
 photos,   data, undefined, 0x310000, 0x300000
 screens,  data, undefined, 0x610000, 0x400000
+# firmware updates from the settings page (in the space after screens; nothing above moves)
+otadata,  data, ota,       0xa10000, 0x2000
+ota_0,    app,  ota_0,     0xa20000, 0x300000
+ota_1,    app,  ota_1,     0xd20000, 0x300000

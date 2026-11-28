@@ -228,7 +228,8 @@ fn run_inner() -> Result<std::convert::Infallible> {
         Wake::Button(p) => Some(crate::sleep::gesture_after_wake(p)),
         Wake::Timer | Wake::PowerOn => None,
     };
-    log::info!("frogterm {} woke by {wake:?} ({gesture:?})", env!("FT_VERSION"));
+    log::info!("frogterm {} woke by {wake:?} ({gesture:?})", crate::ota::version());
+    crate::ota::log_rollback();
     let p = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;
@@ -257,7 +258,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
         (_, None) => {
             log::warn!("no usable settings: sleeping until a button is pressed");
             crate::board::set_led(Led::Off);
-            deep_sleep(schedule::when_time_unknown(), schedule::arm_button(button_held()))
+            planned_sleep(schedule::when_time_unknown())
         }
         _ => Next::Wake(wake),
     };
@@ -271,7 +272,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
             nvs.save(&state);
         }
         crate::board::set_led(e.led);
-        deep_sleep(e.secs, schedule::arm_button(button_held()));
+        planned_sleep(e.secs);
     }
     // busy from here on, until the panel's rest after this wake is over
     crate::board::set_led(Led::On);
@@ -303,7 +304,13 @@ fn run_inner() -> Result<std::convert::Infallible> {
         }
         (Next::Wake(_), None) => schedule::when_time_unknown(), // not reached: no settings open settings mode
     };
-    // buttons stay active: a press wakes the device
+    planned_sleep(secs)
+}
+
+/// The end of a wake that went as planned: this firmware works (a new one
+/// is kept, see `ota::confirm`), then deep sleep; the buttons stay active.
+fn planned_sleep(secs: u64) -> ! {
+    crate::ota::confirm();
     deep_sleep(secs, schedule::arm_button(button_held()))
 }
 
@@ -351,14 +358,27 @@ fn settings_mode(dev: &mut Reterminal, state: &mut State, via: Via, gestures: &R
         let pressed = gestures.recv_timeout(Duration::from_secs(1)).is_ok();
         let idle = portal.idle() >= idle_limit;
         let over = started.elapsed() >= SETTINGS_MAX;
-        if !(pressed || idle || over) {
+        let installed = portal.installed();
+        if !(pressed || idle || over || installed) {
             continue;
+        }
+        if installed {
+            // let the browser get its answer, then boot the new firmware
+            std::thread::sleep(Duration::from_secs(2));
         }
         if idle {
             log::info!("nobody opened the settings page for {} min", app::SETTINGS_IDLE_SECS / 60);
         }
         match crate::settings::load(&dev.nvs.nvs) {
             Some(cfg) => break with_rules(&cfg, |rules| app::end_settings(dev, state, rules, dev.now())),
+            // a new firmware without usable settings: it starts in settings mode
+            None if installed => {
+                crate::sleep::set_settings_mode(false);
+                portal.close();
+                log::info!("restarting into the new firmware");
+                // SAFETY: plain ESP-IDF restart
+                unsafe { esp_idf_svc::sys::esp_restart() }
+            }
             // still unusable: green stays in settings mode; left alone, the
             // device sleeps (battery) until a button opens it again
             None if pressed => dev.beep(beep::ERROR),

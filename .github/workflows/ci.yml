@@ -153,7 +153,7 @@ jobs:
           {
             echo "frogterm $VERSION — the firmware for the reTerminal E1002."
             echo
-            echo "- \`firmware.bin\`: update, written at 0x10000; the device keeps its settings."
+            echo "- \`firmware.bin\`: update — upload it on the device's settings page (Firmware), or write it at 0x10000; the device keeps its settings."
             echo "- \`firmware-full.bin\`: first install, written at 0x0; erases the settings (the device then starts in settings mode)."
             echo "- Or install from the browser: https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/"
             echo

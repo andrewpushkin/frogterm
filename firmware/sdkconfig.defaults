@@ -29,3 +29,7 @@ CONFIG_LWIP_DHCP_RESTORE_LAST_IP=y
 # Thread stacks (download threads, jpeg-decoder's worker threads) may live in
 # PSRAM: internal RAM is too small for ~12 concurrent stacks.
 CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
+# Firmware updates from the settings page: a new firmware that does not
+# confirm itself (a planned deep sleep) is rolled back at the next restart.
+# The bootloader built with these settings is flashed (Makefile).
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

@@ -4,6 +4,7 @@ mod app;
 mod board;
 mod epd;
 mod net;
+mod ota;
 mod portal;
 mod rtc;
 mod settings;

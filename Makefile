@@ -24,6 +24,11 @@ FEATURES     ?=
 # Release number baked into the firmware (CI: commits on main)
 FT_VERSION   ?= dev
 ELF          := build/target/xtensa-esp32s3-espidf/release/frogterm
+# The bootloader ESP-IDF builds with sdkconfig.defaults (rollback of a failed
+# update on), not espflash's own; the newest one of the builds
+BOOTLOADER    = $$(ls -t build/target/xtensa-esp32s3-espidf/release/build/esp-idf-sys-*/out/build/bootloader/bootloader.bin | head -1)
+# The app goes to factory; otadata is erased, so the firmware just flashed runs
+IMAGE_ARGS   := --chip esp32s3 --flash-size 32mb --partition-table firmware/partitions.csv --target-app-partition factory
 USBIPD       ?= $(shell command -v usbipd.exe 2>/dev/null || echo "/mnt/c/Program Files/usbipd-win/usbipd.exe")
 USBIPD_BUSID ?=
 
@@ -37,8 +42,8 @@ all: firmware
 # table + app for a first install at 0x0 (erases the settings).
 firmware: image
 	$(DOCKER) sh -c 'cd firmware && FT_VERSION="$(FT_VERSION)" cargo build --release $(if $(FEATURES),--features "$(FEATURES)")'
-	$(DOCKER) espflash save-image --chip esp32s3 --flash-size 32mb --partition-table firmware/partitions.csv $(ELF) build/frogterm.bin
-	$(DOCKER) espflash save-image --chip esp32s3 --flash-size 32mb --partition-table firmware/partitions.csv --merge --skip-padding $(ELF) build/frogterm-full.bin
+	$(DOCKER) sh -c 'bl=$(BOOTLOADER) && espflash save-image $(IMAGE_ARGS) --bootloader "$$bl" $(ELF) build/frogterm.bin \
+		&& espflash save-image $(IMAGE_ARGS) --bootloader "$$bl" --merge --skip-padding $(ELF) build/frogterm-full.bin'
 	@ls -l build/frogterm.bin build/frogterm-full.bin
 
 # Serial port of the reTerminal in WSL; attaches it with usbipd-win if needed.
@@ -66,9 +71,8 @@ FLASH_FEATURES = $(strip $(if $(NO_CONFIG),,copy-config) $(FEATURES))
 flash: image
 	@[ -n "$(NO_CONFIG)" ] || [ -f "$(CONFIG)" ] || { echo "$(CONFIG) not found: cp config.example.toml config.toml and edit it (or NO_CONFIG=1 to keep the device's settings)"; exit 2; }
 	$(DOCKER) sh -c 'cd firmware && FT_VERSION="$(FT_VERSION)" FT_CONFIG="/work/$(CONFIG)" FT_FLASH_ID="$$(date +%s)" cargo build --release $(if $(FLASH_FEATURES),--features "$(FLASH_FEATURES)")'
-	@$(FIND_PORT); echo "flashing via $$port"; \
-	$(DOCKER_DEV) espflash flash --chip esp32s3 --flash-size 32mb \
-		--partition-table firmware/partitions.csv --port $$port $(ELF)
+	@$(FIND_PORT); echo "flashing via $$port"; bl=$(BOOTLOADER); \
+	$(DOCKER_DEV) espflash flash $(IMAGE_ARGS) --bootloader "$$bl" --erase-parts otadata --port $$port $(ELF)
 
 monitor:
 	@$(FIND_PORT); $(DOCKER_DEV) espflash monitor --chip esp32s3 --port $$port --elf $(ELF)

@@ -2,7 +2,7 @@
 //! (`frogterm-setup`, 192.168.4.1) or the home Wi-Fi, and the settings page
 //! of `frogterm_core::portal` on port 80, with NVS as its settings file.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +37,8 @@ pub struct Portal {
     network: Network,
     /// Milliseconds since boot (`now_ms`) of the last page request (or of the start).
     last_request: Arc<AtomicU32>,
+    /// A new firmware was installed: it boots at the next restart.
+    installed: Arc<AtomicBool>,
     /// The Wi-Fi name and the page's address, for the screen.
     pub network_name: String,
     pub address: String,
@@ -63,14 +65,20 @@ impl Portal {
             _ => (Network::AccessPoint(access_point(modem, sysloop, nvs.clone())?), app::AP_SSID.to_string(), app::AP_ADDRESS.to_string()),
         };
         let last_request = Arc::new(AtomicU32::new(now_ms()));
-        let server = serve(nvs, last_request.clone())?;
+        let installed = Arc::new(AtomicBool::new(false));
+        let server = serve(nvs, last_request.clone(), installed.clone())?;
         log::info!("settings page at {address} (Wi-Fi {network_name})");
-        Ok(Portal { _server: server, network, last_request, network_name, address })
+        Ok(Portal { _server: server, network, last_request, installed, network_name, address })
     }
 
     /// Time since the last page request (or since the start).
     pub fn idle(&self) -> Duration {
         Duration::from_millis(u64::from(now_ms().wrapping_sub(self.last_request.load(Ordering::Relaxed))))
+    }
+
+    /// A new firmware was installed from the page (it boots at the next restart).
+    pub fn installed(&self) -> bool {
+        self.installed.load(Ordering::Relaxed)
     }
 
     /// The server and the Wi-Fi off.
@@ -107,9 +115,18 @@ fn access_point(modem: Modem<'static>, sysloop: EspSystemEventLoop, nvs: EspDefa
     Ok(wifi)
 }
 
-/// The page on port 80: every request goes to `portal::handle`.
-fn serve(nvs: EspDefaultNvsPartition, last_request: Arc<AtomicU32>) -> Result<EspHttpServer<'static>> {
+/// The page on port 80: a firmware upload goes to `ota::install`, every
+/// other request to `portal::handle`.
+fn serve(nvs: EspDefaultNvsPartition, last_request: Arc<AtomicU32>, installed: Arc<AtomicBool>) -> Result<EspHttpServer<'static>> {
     let mut server = EspHttpServer::new(&ServerConfig { stack_size: 16 * 1024, uri_match_wildcard: true, ..Default::default() })?;
+    {
+        // registered first: handlers are tried in order, "/*" would take it
+        let last_request = last_request.clone();
+        server.fn_handler("/update", Method::Post, move |req| {
+            last_request.store(now_ms(), Ordering::Relaxed);
+            update(req, &last_request, &installed).map_err(|e| log::warn!("firmware upload: {e:#}"))
+        })?;
+    }
     for method in [Method::Get, Method::Post] {
         let (nvs, last_request) = (nvs.clone(), last_request.clone());
         server.fn_handler("/*", method, move |req| {
@@ -118,6 +135,27 @@ fn serve(nvs: EspDefaultNvsPartition, last_request: Arc<AtomicU32>) -> Result<Es
         })?;
     }
     Ok(server)
+}
+
+/// A firmware upload: installed if it is a whole frogterm firmware.
+fn update(mut req: Request<&mut EspHttpConnection<'_>>, last_request: &AtomicU32, installed: &AtomicBool) -> Result<()> {
+    let len: usize = req.header("Content-Length").and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+    log::info!("firmware upload: {} KB", len / 1024);
+    let result = crate::ota::install(len, &mut |buf| Ok(req.read(buf)?), &mut || last_request.store(now_ms(), Ordering::Relaxed));
+    let (status, text) = match result {
+        Ok(version) => {
+            log::info!("firmware {version} installed, it boots at the next restart");
+            installed.store(true, Ordering::Relaxed);
+            (200, format!("Installed frogterm {version}. The frame restarts with it now (the panel updates when it has synced)."))
+        }
+        Err(e) => {
+            log::warn!("firmware upload refused: {e:#}");
+            (400, format!("Not installed: {e:#}. The running firmware stays."))
+        }
+    };
+    req.into_response(status, None, &[("Content-Type", "text/plain; charset=utf-8"), ("Cache-Control", "no-store")])?
+        .write_all(text.as_bytes())?;
+    Ok(())
 }
 
 /// One request; a good save is written to NVS.
