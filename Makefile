@@ -80,9 +80,10 @@ monitor:
 # Testing over the serial port (tools/console.py): BUTTON=green|next|previous|
 # "hold green"|"hold next"; SECS: how long to show the log.
 # press: reset the chip and press BUTTON as the waking button, show the log until it sleeps
-# send:  press BUTTON now (the device must be awake); log: the log, no reset
+# send:  press BUTTON now (the device must be awake), or once a log line has
+#        WHEN; BUTTON="a;b" sends a, then b; log: the log, no reset
 press send:
-	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/console.py --port $$port $@ "$(BUTTON)" $(if $(SECS),--secs $(SECS))
+	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/console.py --port $$port $@ "$(BUTTON)" $(if $(SECS),--secs $(SECS)) $(if $(WHEN),--when "$(WHEN)")
 log:
 	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/console.py --port $$port log $(if $(SECS),--secs $(SECS))
 

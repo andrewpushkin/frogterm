@@ -5,7 +5,9 @@ the log (runs in the Docker image, which has pyserial; see `make press`).
   console.py --port P press BUTTON [--secs N]  reset the chip and press BUTTON as
                                              the waking button, then the log
                                              until the device sleeps
-  console.py --port P send BUTTON [--secs N]   press BUTTON now (device awake)
+  console.py --port P send BUTTON [--secs N]  press BUTTON now (device awake);
+                                             --when TEXT: once a log line has TEXT;
+                                             BUTTON "a;b": a, then b a second later
   console.py --port P log [--secs N]           the log, no reset
 
 BUTTON: green, next, previous (right, left), "hold green", "hold next".
@@ -64,6 +66,7 @@ def main():
     ap.add_argument("what", choices=["press", "send", "log"])
     ap.add_argument("button", nargs="?", default="")
     ap.add_argument("--secs", type=float, default=None)
+    ap.add_argument("--when", default=None, help="send once a log line contains this")
     a = ap.parse_args()
     s, start = open_port(a.port), time.time()
     if a.what == "press":
@@ -75,8 +78,13 @@ def main():
         show(f">>> {a.button}", start)
         follow(s, a.secs or 300, start, until="deep sleep for")
     elif a.what == "send":
-        s.write((a.button + "\n").encode())
-        show(f">>> {a.button}", start)
+        if a.when and not follow(s, a.secs or 300, start, until=a.when):
+            sys.exit(f"no log line with {a.when!r}")
+        for i, button in enumerate(b.strip() for b in a.button.split(";")):
+            if i:
+                follow(s, 1, start)
+            s.write((button + "\n").encode())
+            show(f">>> {button}", start)
         follow(s, a.secs or 60, start)
     else:
         follow(s, a.secs or 60, start)
