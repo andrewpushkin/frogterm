@@ -176,5 +176,11 @@ first, the firmware follows.
   firmware just flashed is the one that runs.
 - The emulator shows the same box and checks an uploaded file the same way,
   but installs nothing.
-- Not now: an "update to the latest release" button (the device downloading
-  from GitHub itself).
+- **Automatic update** (owner, added later): setting `auto_update` (true /
+  false, on by default; a checkbox on the page). Every sync reads
+  `version.txt` on the GitHub Pages site and, if it names a higher release
+  than the running one, installs that release's `firmware.bin` from the same
+  site (it starts at the next wake). My calls: the Pages site, not the GitHub
+  API (no rate limit, the files of one CI run); only a release updates itself
+  (a local "dev" build stays); a release that was installed and rolled back
+  is not installed again.
