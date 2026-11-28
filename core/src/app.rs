@@ -208,6 +208,13 @@ pub fn run(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
     secs
 }
 
+/// A press while the device is awake (a wake is running): ignored, the wake
+/// goes on; the device plays the returned tones (the busy pips).
+pub fn press_while_awake(p: Press) -> &'static [Tone] {
+    log::info!("{p:?} pressed while awake: ignored");
+    beep::BUSY
+}
+
 /// Seconds the panel still rests after its last refresh, if it does.
 fn resting(now: i64, state: &State) -> Option<u64> {
     schedule::panel_rest(now, state.last_refresh, schedule::PANEL_REST_SECS)
@@ -733,6 +740,13 @@ mod tests {
         run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
         assert!(dev.shown.is_empty());
         assert_eq!(dev.beeps, vec!["press", "error"]);
+    }
+
+    #[test]
+    fn a_press_while_awake_is_ignored_with_the_busy_pips() {
+        for p in [Press::Update, Press::Next, Press::Previous] {
+            assert_eq!(press_while_awake(p), beep::BUSY);
+        }
     }
 
     #[test]

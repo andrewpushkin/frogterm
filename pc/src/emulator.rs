@@ -202,6 +202,23 @@ impl Emulated {
     }
 }
 
+/// The buzzer: the PC names the sound in the log (and rings the terminal
+/// bell for the final beeps).
+pub fn play(tones: &[Tone]) {
+    let sound = match tones {
+        t if t == beep::PRESS => "chirp (press noticed)",
+        t if t == beep::BUSY => "pip-pip-pip (busy, press ignored)",
+        t if t == beep::SUCCESS => "beep (done, ready)",
+        t if t == beep::ERROR => "low beep beep beep (failed, ready)",
+        _ => "beep",
+    };
+    log::info!("sound: {sound}");
+    if tones == beep::SUCCESS || tones == beep::ERROR {
+        print!("\x07");
+        std::io::stdout().flush().ok();
+    }
+}
+
 /// Battery voltage that shows as `pct` %.
 fn battery_mv_for(pct: u8) -> u32 {
     (3000..=4300).find(|&mv| battery::percent(mv) >= pct).unwrap_or(4300)
@@ -209,18 +226,7 @@ fn battery_mv_for(pct: u8) -> u32 {
 
 impl Device for Emulated {
     fn beep(&mut self, tones: &[Tone]) {
-        let sound = match tones {
-            t if t == beep::PRESS => "chirp (press noticed)",
-            t if t == beep::BUSY => "pip-pip-pip (busy, press ignored)",
-            t if t == beep::SUCCESS => "beep (done, ready)",
-            t if t == beep::ERROR => "low beep beep beep (failed, ready)",
-            _ => "beep",
-        };
-        log::info!("sound: {sound}");
-        if tones == beep::SUCCESS || tones == beep::ERROR {
-            print!("\x07");
-            std::io::stdout().flush().ok();
-        }
+        play(tones);
     }
 
     fn led(&mut self, led: Led) {

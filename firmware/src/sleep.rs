@@ -5,8 +5,8 @@ use esp_idf_svc::sys;
 pub use frogterm_core::app::Wake;
 use frogterm_core::buttons;
 
-/// All buttons, green first.
-pub const BUTTON_GPIOS: [i32; 3] = [buttons::GREEN_GPIO as i32, buttons::NEXT_GPIO as i32, buttons::PREVIOUS_GPIO as i32];
+/// All buttons, in `buttons::ALL` order (green first).
+pub const BUTTON_GPIOS: [i32; 3] = [buttons::ALL[0].1 as i32, buttons::ALL[1].1 as i32, buttons::ALL[2].1 as i32];
 
 pub fn wake_cause() -> Wake {
     #[allow(non_upper_case_globals)]
@@ -47,20 +47,16 @@ pub fn button_held() -> bool {
     BUTTON_GPIOS.iter().any(|&g| is_down(g))
 }
 
-/// While the device is awake (busy), every new press of any button gets the
-/// triple "busy" beep and is otherwise ignored (the running update goes on).
+/// While the device is awake, every new press is handled as the shared rule
+/// says (`app::press_while_awake`, as in the emulator).
 pub fn spawn_press_listener() {
     let spawned = std::thread::Builder::new().name("buttons".into()).stack_size(4096).spawn(|| {
-        // presses already down (e.g. the one that woke us) are not new ones
-        let mut was_down = BUTTON_GPIOS.map(is_down);
+        let mut presses = buttons::NewPresses::new(BUTTON_GPIOS.map(is_down));
         loop {
             std::thread::sleep(std::time::Duration::from_millis(20));
-            let down = BUTTON_GPIOS.map(is_down);
-            if down.iter().zip(&was_down).any(|(&d, &w)| d && !w) {
-                log::info!("button pressed during the update: ignored");
-                crate::board::play(frogterm_core::beep::BUSY);
+            if let Some(p) = presses.poll(BUTTON_GPIOS.map(is_down)) {
+                crate::board::play(frogterm_core::app::press_while_awake(p));
             }
-            was_down = down;
         }
     });
     if let Err(e) = spawned {

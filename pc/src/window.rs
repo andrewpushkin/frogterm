@@ -157,8 +157,8 @@ pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
         let busy = ui.busy.load(Ordering::Relaxed);
         for p in pressed {
             if busy {
-                // as on the device: the busy beep, the running update goes on
-                log::info!("button pressed during the update: ignored (sound: pip-pip-pip, busy)");
+                // the device's rule: ignored with the busy pips, the wake goes on
+                crate::emulator::play(frogterm_core::app::press_while_awake(p));
             } else {
                 ui.set_busy(true);
                 presses.send(p).map_err(|_| anyhow!("the device thread stopped"))?;

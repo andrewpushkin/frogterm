@@ -30,6 +30,29 @@ impl Press {
     }
 }
 
+/// Every button with its pin, green first.
+pub const ALL: [(Press, u32); 3] = [(Press::Update, GREEN_GPIO), (Press::Next, NEXT_GPIO), (Press::Previous, PREVIOUS_GPIO)];
+
+/// New presses while the device is awake, from the buttons' levels (in `ALL`
+/// order) polled again and again.
+pub struct NewPresses {
+    down: [bool; 3],
+}
+
+impl NewPresses {
+    /// Buttons already down now (e.g. the one that woke the device) are not new presses.
+    pub fn new(down: [bool; 3]) -> NewPresses {
+        NewPresses { down }
+    }
+
+    /// The button that went down since the last poll, if any.
+    pub fn poll(&mut self, down: [bool; 3]) -> Option<Press> {
+        let new = (0..3).find(|&i| down[i] && !self.down[i]).map(|i| ALL[i].0);
+        self.down = down;
+        new
+    }
+}
+
 /// Which button woke the chip, from the ext1 wake-up GPIO mask.
 pub fn press_from_pins(mask: u64) -> Option<Press> {
     let pressed = |gpio: u32| mask & (1 << gpio) != 0;
@@ -69,6 +92,18 @@ mod tests {
         assert_eq!(press_from_pins(0), None);
         // two at once: the green button wins
         assert_eq!(press_from_pins(1 << GREEN_GPIO | 1 << NEXT_GPIO), Some(Press::Update));
+    }
+
+    #[test]
+    fn only_a_button_going_down_is_a_new_press() {
+        let mut p = NewPresses::new([true, false, false]);
+        assert_eq!(p.poll([true, false, false]), None, "the press that woke the device is not new");
+        assert_eq!(p.poll([false, false, false]), None, "letting go is no press");
+        assert_eq!(p.poll([false, true, false]), Some(Press::Next));
+        assert_eq!(p.poll([false, true, false]), None, "held, not pressed again");
+        assert_eq!(p.poll([true, true, true]), Some(Press::Update));
+        assert_eq!(p.poll([false, false, false]), None);
+        assert_eq!(p.poll([false, false, true]), Some(Press::Previous));
     }
 
     #[test]
