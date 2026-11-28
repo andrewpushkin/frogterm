@@ -12,9 +12,9 @@ use embedded_graphics::pixelcolor::Rgb888;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Circle, PrimitiveStyle, Rectangle, RoundedRectangle};
 use frogterm_core::app::Led;
-use frogterm_core::buttons::Press;
+use frogterm_core::buttons::{Gesture, Holds, Press, ALL};
 use frogterm_core::framebuf::{FrameBuffer, HEIGHT, WIDTH};
-use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
+use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::{fonts, FontRenderer};
 
@@ -41,6 +41,8 @@ pub struct Shared {
     led: AtomicU8,
     /// When the timer wakes the sleeping device.
     wake_at: Mutex<Option<Instant>>,
+    /// Settings mode: the page is served, green ends it.
+    settings: AtomicBool,
 }
 
 impl Shared {
@@ -59,6 +61,10 @@ impl Shared {
         self.led.store(led as u8, Ordering::Relaxed);
     }
 
+    pub fn set_settings(&self, on: bool) {
+        self.settings.store(on, Ordering::Relaxed);
+    }
+
     /// Whether the LED is lit now.
     fn led_lit(&self) -> bool {
         self.led.load(Ordering::Relaxed) != 0
@@ -68,6 +74,26 @@ impl Shared {
     pub fn sleeping(&self, at: Instant) {
         *self.wake_at.lock().unwrap() = Some(at);
         self.busy.store(false, Ordering::Relaxed);
+    }
+}
+
+/// What the window does with a gesture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// To the device: it wakes (or, in settings mode, leaves it).
+    Send,
+    /// The device is awake: the busy pips, the gesture is ignored.
+    BusyPips,
+}
+
+/// The device's rules for a gesture: asleep, everything wakes it; awake,
+/// everything gets the busy pips — except green in settings mode, which
+/// ends it.
+pub fn route(g: Gesture, busy: bool, settings: bool) -> Route {
+    match g {
+        Gesture::Press(Press::Update) | Gesture::Hold(Press::Update) if settings => Route::Send,
+        _ if busy || settings => Route::BusyPips,
+        _ => Route::Send,
     }
 }
 
@@ -107,8 +133,9 @@ pub fn duration(secs: u64) -> String {
     }
 }
 
-/// Runs the window until it is closed; clicks and keys go to `presses`.
-pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
+/// Runs the window until it is closed; clicks and keys go to `gestures`
+/// (on release, or at the 10-s mark of a hold, as on the device).
+pub fn run(ui: &Shared, gestures: Sender<Gesture>) -> Result<()> {
     let mut window = Window::new("frogterm - reTerminal E1002 emulator", W, H, WindowOptions::default())
         .map_err(|e| anyhow!("cannot open a window ({e}); without a display run `make emulator ARGS=--once`"))?;
     window.set_target_fps(30);
@@ -119,7 +146,10 @@ pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
     let mut new = panel.clone();
     let mut fade_start: Option<Instant> = None;
     let mut was_down = false;
-    let mut held: Option<Press> = None;
+    // the button the mouse went down on, held until the mouse is let go
+    let mut clicked: Option<Press> = None;
+    let start = Instant::now();
+    let mut holds = Holds::new([false; 3], 0);
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if let Some(fb) = ui.screen.lock().unwrap().take() {
             old.copy_from_slice(&panel); // also from the middle of a fade
@@ -134,34 +164,39 @@ pub fn run(ui: &Shared, presses: Sender<Press>) -> Result<()> {
             }
         }
 
-        // a press is a click on a button, or a key
-        let mut pressed = Vec::new();
+        // a button is down while the mouse holds it or its key is down
         let mouse = window.get_mouse_pos(MouseMode::Discard);
         let down = window.get_mouse_down(MouseButton::Left);
         if down && !was_down {
-            held = mouse.and_then(|(x, y)| button_at(x, y));
-            pressed.extend(held);
+            clicked = mouse.and_then(|(x, y)| button_at(x, y));
         }
         if !down {
-            held = None;
+            clicked = None;
         }
         was_down = down;
-        for key in window.get_keys_pressed(KeyRepeat::No) {
-            pressed.extend(match key {
-                Key::Left => Some(Press::Previous),
-                Key::Right => Some(Press::Next),
-                Key::Space | Key::Enter | Key::G => Some(Press::Update),
-                _ => None,
-            });
-        }
-        let busy = ui.busy.load(Ordering::Relaxed);
-        for p in pressed {
-            if busy {
+        let key = |keys: &[Key]| keys.iter().any(|&k| window.is_key_down(k));
+        let levels = ALL.map(|(p, _)| {
+            clicked == Some(p)
+                || match p {
+                    Press::Previous => key(&[Key::Left]),
+                    Press::Next => key(&[Key::Right]),
+                    Press::Update => key(&[Key::Space, Key::Enter, Key::G]),
+                }
+        });
+        let held = ALL.iter().zip(levels).find(|(_, d)| *d).map(|((p, _), _)| *p);
+        if let Some(g) = holds.poll(levels, start.elapsed().as_millis() as u64) {
+            let settings = ui.settings.load(Ordering::Relaxed);
+            match route(g, ui.busy.load(Ordering::Relaxed), settings) {
                 // the device's rule: ignored with the busy pips, the wake goes on
-                crate::emulator::play(frogterm_core::app::press_while_awake(p));
-            } else {
-                ui.set_busy(true);
-                presses.send(p).map_err(|_| anyhow!("the device thread stopped"))?;
+                Route::BusyPips => crate::emulator::play(frogterm_core::app::press_while_awake(match g {
+                    Gesture::Press(p) | Gesture::Hold(p) => p,
+                })),
+                Route::Send => {
+                    if !settings {
+                        ui.set_busy(true);
+                    }
+                    gestures.send(g).map_err(|_| anyhow!("the device thread stopped"))?;
+                }
             }
         }
 
@@ -207,11 +242,19 @@ fn panel_pixels(fb: &FrameBuffer, panel: &mut [u32]) {
 fn draw_window(pixels: &mut [u32], panel: &[u32], ui: &Shared, held: Option<Press>) {
     pixels[W * BAR as usize..].copy_from_slice(panel);
     let wake_in = ui.wake_at.lock().unwrap().map(|at| at.saturating_duration_since(Instant::now()).as_secs());
-    draw_bar(pixels, ui.busy.load(Ordering::Relaxed), ui.led_lit(), held, wake_in, &crate::logger::last());
+    let state = if ui.settings.load(Ordering::Relaxed) {
+        "settings mode (green: finish)"
+    } else if ui.busy.load(Ordering::Relaxed) {
+        "awake"
+    } else {
+        "asleep"
+    };
+    draw_bar(pixels, state, ui.led_lit(), held, wake_in, &crate::logger::last());
 }
 
 /// Buttons, LED and status line above the panel.
-fn draw_bar(pixels: &mut [u32], awake: bool, led_lit: bool, held: Option<Press>, wake_in: Option<u64>, last_log: &str) {
+fn draw_bar(pixels: &mut [u32], state: &str, led_lit: bool, held: Option<Press>, wake_in: Option<u64>, last_log: &str) {
+    let awake = state != "asleep";
     let mut c = Canvas(pixels);
     let bar = Rectangle::new(Point::zero(), Size::new(WIDTH, BAR));
     let _ = bar.into_styled(PrimitiveStyle::with_fill(Rgb888::new(52, 54, 58))).draw(&mut c);
@@ -252,7 +295,6 @@ fn draw_bar(pixels: &mut [u32], awake: bool, led_lit: bool, held: Option<Press>,
             status_end = d.map_or(status_end, |b| b.top_left.x) - 16;
         }
     }
-    let state = if awake { "awake" } else { "asleep" };
     let status: String = format!("{state}  |  {last_log}").chars().map(|ch| if (ch as u32) < 0x100 { ch } else { '?' }).collect();
     let status = fit(&STATUS_FONT, &status, status_end - 32);
     let _ = STATUS_FONT.render_aligned(
@@ -338,6 +380,20 @@ mod tests {
     }
 
     #[test]
+    fn gestures_go_to_the_device_only_when_it_listens() {
+        use Gesture::{Hold, Press as Tap};
+        for g in [Tap(Press::Update), Tap(Press::Next), Tap(Press::Previous), Hold(Press::Update), Hold(Press::Next)] {
+            assert_eq!(route(g, false, false), Route::Send, "asleep: {g:?} wakes it");
+            assert_eq!(route(g, true, false), Route::BusyPips, "awake: {g:?} ignored");
+        }
+        assert_eq!(route(Tap(Press::Update), true, true), Route::Send, "green ends settings mode");
+        assert_eq!(route(Hold(Press::Update), true, true), Route::Send);
+        assert_eq!(route(Tap(Press::Next), true, true), Route::BusyPips);
+        assert_eq!(route(Hold(Press::Next), true, true), Route::BusyPips);
+        assert_eq!(route(Tap(Press::Previous), true, true), Route::BusyPips);
+    }
+
+    #[test]
     fn durations_read_well() {
         assert_eq!(duration(40), "40 s");
         assert_eq!(duration(185), "3 min 5 s");
@@ -383,17 +439,17 @@ mod tests {
     fn countdown_is_drawn_at_the_right_only_while_asleep() {
         let right_part = |px: &[u32]| (0..BAR as usize).any(|y| (W - 60..W - 12).any(|x| px[y * W + x] == 0x00ff_ffff));
         let mut asleep = vec![0u32; W * H];
-        draw_bar(&mut asleep, false, false, None, Some(3725), "");
+        draw_bar(&mut asleep, "asleep", false, None, Some(3725), "");
         assert!(right_part(&asleep), "white countdown digits at the right");
         let mut awake = vec![0u32; W * H];
-        draw_bar(&mut awake, true, false, None, None, "");
+        draw_bar(&mut awake, "awake", false, None, None, "");
         assert!(!right_part(&awake), "no countdown while awake");
     }
 
     #[test]
     fn bar_draws_inside_the_window() {
         let mut px = vec![0u32; W * H];
-        draw_bar(&mut px, false, true, Some(Press::Update), Some(3600), "sleeping until Thu 26 Nov 06:00 local, °C ♪ Шалом");
+        draw_bar(&mut px, "asleep", true, Some(Press::Update), Some(3600), "sleeping until Thu 26 Nov 06:00 local, °C ♪ Шалом");
         assert!(px[W * BAR as usize..].iter().all(|&p| p == 0), "the panel area is left alone");
         let c = button_rect(2).top_left + Point::new(20, 5);
         assert_eq!(px[c.y as usize * W + c.x as usize], rgb32(dim(Rgb888::new(40, 160, 70))), "the green button, held");

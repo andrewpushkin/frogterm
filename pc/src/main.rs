@@ -8,7 +8,6 @@ mod config;
 mod emulator;
 mod logger;
 mod net;
-#[allow(dead_code)] // used by the emulator from the next step
 mod portal_server;
 mod window;
 

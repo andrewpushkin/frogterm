@@ -14,8 +14,9 @@ DOCKER_RUN := docker run --rm -i $(TTY) --init \
 	-e CARGO_HOME=/work/.cargo-docker \
 	-e CARGO_TARGET_DIR=/work/build/target
 DOCKER := $(DOCKER_RUN) $(IMAGE)
-# ...with the X server of WSLg / the Linux desktop, for the emulator window
-DOCKER_X11 := $(DOCKER_RUN) -e DISPLAY=$(DISPLAY) -v /tmp/.X11-unix:/tmp/.X11-unix $(IMAGE)
+# ...with the X server of WSLg / the Linux desktop, for the emulator window, and
+# the host's network for its settings page
+DOCKER_X11 := $(DOCKER_RUN) --network host -e DISPLAY=$(DISPLAY) -v /tmp/.X11-unix:/tmp/.X11-unix $(IMAGE)
 
 PC := cargo run --release -q -p frogterm-pc --
 
@@ -74,8 +75,9 @@ tests: image
 
 # The device on the PC (the firmware's wake logic) in a window with its three
 # buttons; out/ is its flash. ARGS=--once: no window, one wake -> out/screen.png
+# Without a usable $(CONFIG) it starts in settings mode: the settings page on
+# port 8080 (the host's network, so the browser reaches it) writes it.
 emulator: image
-	@test -f "$(CONFIG)" || { echo "$(CONFIG) not found: cp config.example.toml config.toml and edit it"; exit 2; }
 	$(DOCKER_X11) $(PC) emulator --config "$(CONFIG)" --out out $(ARGS)
 
 # Check the Google album: ALBUM=<link>, or album_url from $(CONFIG)
@@ -92,6 +94,7 @@ help:
 	@echo "make tests      run all unit tests"
 	@echo "make emulator   the device in a window: click its 3 buttons (flash in out/)"
 	@echo "                [ARGS=--no-rest] no panel rest between refreshes"
-	@echo "                [ARGS='--once next'] no window: one wake (green|next|previous) -> out/screen.png"
+	@echo "                [ARGS='--once next'] no window: one wake (green|next|previous|hold-green|hold-next) -> out/screen.png"
+	@echo "                hold green 10 s: settings page (http://localhost:8080/)"
 	@echo "make pc-check   check the Google album [ALBUM=<link>] [ARGS='--index 3']"
 	@echo "make clean      remove build output and caches"
