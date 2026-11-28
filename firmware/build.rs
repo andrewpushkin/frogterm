@@ -1,14 +1,12 @@
 //! Bakes `../config.toml` into the firmware as `FT_*` environment variables,
 //! validated with the same code as the PC tools.
 
-#[path = "../pc/src/config.rs"]
-#[allow(dead_code)]
-mod config;
+use frogterm_core::config;
 
 fn main() -> anyhow::Result<()> {
     embuild::espidf::sysenv::output();
     println!("cargo:rerun-if-changed=../config.toml");
-    println!("cargo:rerun-if-changed=../pc/src/config.rs");
+    println!("cargo:rerun-if-changed=../core/src/config.rs");
     let c = config::Config::load(std::path::Path::new("../config.toml"))?;
     let ssid = c.wifi_ssid.clone().filter(|s| !s.is_empty());
     let Some(ssid) = ssid else { anyhow::bail!("wifi_ssid missing in config.toml") };

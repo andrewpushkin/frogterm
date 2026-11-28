@@ -13,7 +13,8 @@ use crate::dither::{dither_area, veil};
 use crate::framebuf::FrameBuffer;
 use crate::info::Info;
 use crate::layout::{
-    draw_events_box, draw_photo_counter, draw_photo_date, draw_weather_box, draw_weather_tab, events_rect, weather_rect, Backdrop, EventsInfo,
+    draw_events_box, draw_photo_counter, draw_photo_date, draw_weather_box, draw_weather_tab, events_rect, weather_rect, Backdrop,
+    EventsInfo,
 };
 use crate::schedule::{self, UpdatePlan, WakePlan};
 use crate::weather::Forecast;

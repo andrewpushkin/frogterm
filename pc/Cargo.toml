@@ -13,7 +13,5 @@ log = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 minifb = { version = "0.28", default-features = false, features = ["x11", "dlopen"] }
 rand = "0.8"
-serde = { version = "1", features = ["derive"] }
-toml = "1"
 ureq = "2"
 u8g2-fonts = "0.9"

@@ -7,6 +7,7 @@ pub mod battery;
 pub mod beep;
 pub mod buttons;
 pub mod calendar;
+pub mod config;
 pub mod date;
 pub mod dither;
 pub mod epd;
