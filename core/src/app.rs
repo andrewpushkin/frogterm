@@ -17,6 +17,7 @@ use crate::layout::{
     EventsInfo,
 };
 use crate::schedule::{self, UpdatePlan, WakePlan};
+use crate::settings_screen::draw_settings_screen;
 use crate::weather::Forecast;
 use crate::{battery, stock, tz};
 
@@ -214,6 +215,65 @@ pub fn run(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
 pub fn press_while_awake(p: Press) -> &'static [Tone] {
     log::info!("{p:?} pressed while awake: ignored");
     beep::BUSY
+}
+
+/// Where settings mode serves the settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Via {
+    /// The device's own open Wi-Fi network (green held 10 s).
+    AccessPoint,
+    /// The configured home Wi-Fi (right held 10 s).
+    HomeWifi,
+}
+
+/// The access point's network name and the page's address on it.
+pub const AP_SSID: &str = "frogterm-setup";
+pub const AP_ADDRESS: &str = "http://192.168.4.1/";
+/// Settings mode ends by itself after this long without a page request.
+pub const SETTINGS_IDLE_SECS: u64 = 15 * 60;
+
+/// The settings mode a 10-s hold opens.
+pub fn via_for(p: Press) -> Option<Via> {
+    match p {
+        Press::Update => Some(Via::AccessPoint),
+        Press::Next => Some(Via::HomeWifi),
+        Press::Previous => None,
+    }
+}
+
+/// The hold was seen: the press chirp and the LED on (busy), before the
+/// network starts.
+pub fn start_settings(dev: &mut impl Device) {
+    log::info!("settings mode");
+    dev.beep(beep::PRESS);
+    dev.led(Led::On);
+}
+
+/// The settings screen on the panel at once (even while the panel rests:
+/// rare and asked for), showing where the page is.
+pub fn show_settings(dev: &mut impl Device, state: &mut State, network: &str, address: &str, now: Option<i64>) -> Result<()> {
+    let mut fb = FrameBuffer::new(crate::framebuf::Ink::White);
+    draw_settings_screen(&mut fb, network, address);
+    dev.show(fb)?;
+    if let Some(now) = now {
+        state.last_refresh = Some(now);
+    }
+    dev.save_state(state);
+    Ok(())
+}
+
+/// Settings mode could not start (e.g. the home Wi-Fi cannot be joined):
+/// the error beep, the panel as it was; returns the seconds to sleep until
+/// the planned wake.
+pub fn settings_failed(dev: &mut impl Device, state: &mut State, now: Option<i64>) -> u64 {
+    dev.beep(beep::ERROR);
+    let secs = match now {
+        Some(now) => (state.target - now).max(1) as u64,
+        None => schedule::when_time_unknown(),
+    };
+    let (led, secs) = led_while_asleep(now, state, secs);
+    dev.led(led);
+    secs
 }
 
 /// Seconds the panel still rests after its last refresh, if it does.
@@ -958,5 +1018,39 @@ mod tests {
         assert_eq!(dev.shown, vec![Some(10)]);
         assert_eq!(dev.no_wifi, vec![true]);
         assert_eq!(st.stock_count, 2);
+    }
+
+    #[test]
+    fn holds_choose_the_network() {
+        assert_eq!(via_for(Press::Update), Some(Via::AccessPoint));
+        assert_eq!(via_for(Press::Next), Some(Via::HomeWifi));
+        assert_eq!(via_for(Press::Previous), None);
+        assert_eq!((AP_SSID, AP_ADDRESS, SETTINGS_IDLE_SECS), ("frogterm-setup", "http://192.168.4.1/", 900));
+    }
+
+    #[test]
+    fn settings_mode_chirps_and_draws_at_once_even_while_the_panel_rests() {
+        let (mut dev, mut st) = stocked(3);
+        run(&mut dev, &mut st, &cfg(), Wake::Button(Press::Next), at(T0));
+        dev.beeps.clear();
+        dev.leds.clear();
+        start_settings(&mut dev);
+        show_settings(&mut dev, &mut st, AP_SSID, AP_ADDRESS, Some(T0 + 20)).unwrap();
+        assert_eq!(dev.beeps, vec!["press"]);
+        assert_eq!(dev.leds, vec![Led::On]);
+        assert_eq!(dev.shown.len(), 2, "drawn although the panel rests");
+        assert_eq!(st.last_refresh, Some(T0 + 20));
+        assert_eq!(dev.saved, Some(st));
+    }
+
+    #[test]
+    fn settings_that_could_not_start_beep_an_error_and_sleep_on() {
+        let (mut dev, mut st) = stocked(3);
+        st.target = T0 + 3600;
+        let secs = settings_failed(&mut dev, &mut st, Some(T0));
+        assert_eq!(dev.beeps, vec!["error"]);
+        assert_eq!(secs, 3600, "until the planned wake");
+        assert_eq!(dev.leds, vec![Led::Off]);
+        assert!(dev.shown.is_empty(), "the panel as it was");
     }
 }

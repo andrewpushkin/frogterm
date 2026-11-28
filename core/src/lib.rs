@@ -21,6 +21,7 @@ pub mod photo_list;
 pub mod portal;
 pub mod schedule;
 pub mod screen;
+pub mod settings_screen;
 pub mod sht4x;
 pub mod stock;
 pub mod text;
