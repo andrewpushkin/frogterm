@@ -6,6 +6,10 @@
 
 fn main() -> anyhow::Result<()> {
     embuild::espidf::sysenv::output();
+    // the release number (commits on main), set by CI; local builds are "dev"
+    println!("cargo:rerun-if-env-changed=FT_VERSION");
+    let version = std::env::var("FT_VERSION").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "dev".into());
+    println!("cargo:rustc-env=FT_VERSION={version}");
     if std::env::var_os("CARGO_FEATURE_COPY_CONFIG").is_some() {
         println!("cargo:rerun-if-env-changed=FT_CONFIG");
         println!("cargo:rerun-if-env-changed=FT_FLASH_ID");

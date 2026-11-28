@@ -21,6 +21,8 @@ DOCKER_X11 := $(DOCKER_RUN) --network host -e DISPLAY=$(DISPLAY) -v /tmp/.X11-un
 PC := cargo run --release -q -p frogterm-pc --
 
 FEATURES     ?=
+# Release number baked into the firmware (CI: commits on main)
+FT_VERSION   ?= dev
 ELF          := build/target/xtensa-esp32s3-espidf/release/frogterm
 USBIPD       ?= $(shell command -v usbipd.exe 2>/dev/null || echo "/mnt/c/Program Files/usbipd-win/usbipd.exe")
 USBIPD_BUSID ?=
@@ -29,12 +31,15 @@ USBIPD_BUSID ?=
 
 all: firmware
 
-# Firmware for the reTerminal -> build/frogterm.bin, without settings (the
-# device keeps its own; no secrets in the file).
+# Firmware for the reTerminal, without settings (the device keeps its own; no
+# secrets in the files): build/frogterm.bin, the app (written at 0x10000, keeps
+# the device's settings), and build/frogterm-full.bin, bootloader + partition
+# table + app for a first install at 0x0 (erases the settings).
 firmware: image
-	$(DOCKER) sh -c 'cd firmware && cargo build --release $(if $(FEATURES),--features "$(FEATURES)")'
+	$(DOCKER) sh -c 'cd firmware && FT_VERSION="$(FT_VERSION)" cargo build --release $(if $(FEATURES),--features "$(FEATURES)")'
 	$(DOCKER) espflash save-image --chip esp32s3 --flash-size 32mb --partition-table firmware/partitions.csv $(ELF) build/frogterm.bin
-	@ls -l build/frogterm.bin
+	$(DOCKER) espflash save-image --chip esp32s3 --flash-size 32mb --partition-table firmware/partitions.csv --merge --skip-padding $(ELF) build/frogterm-full.bin
+	@ls -l build/frogterm.bin build/frogterm-full.bin
 
 # Serial port of the reTerminal in WSL; attaches it with usbipd-win if needed.
 FIND_PORT = port="$(PORT)"; \
@@ -60,7 +65,7 @@ FLASH_FEATURES = $(strip $(if $(NO_CONFIG),,copy-config) $(FEATURES))
 
 flash: image
 	@[ -n "$(NO_CONFIG)" ] || [ -f "$(CONFIG)" ] || { echo "$(CONFIG) not found: cp config.example.toml config.toml and edit it (or NO_CONFIG=1 to keep the device's settings)"; exit 2; }
-	$(DOCKER) sh -c 'cd firmware && FT_CONFIG="/work/$(CONFIG)" FT_FLASH_ID="$$(date +%s)" cargo build --release $(if $(FLASH_FEATURES),--features "$(FLASH_FEATURES)")'
+	$(DOCKER) sh -c 'cd firmware && FT_VERSION="$(FT_VERSION)" FT_CONFIG="/work/$(CONFIG)" FT_FLASH_ID="$$(date +%s)" cargo build --release $(if $(FLASH_FEATURES),--features "$(FLASH_FEATURES)")'
 	@$(FIND_PORT); echo "flashing via $$port"; \
 	$(DOCKER_DEV) espflash flash --chip esp32s3 --flash-size 32mb \
 		--partition-table firmware/partitions.csv --port $$port $(ELF)

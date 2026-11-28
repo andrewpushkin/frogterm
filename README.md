@@ -5,6 +5,11 @@
 ![Rust](https://img.shields.io/badge/rust-1.100-orange?logo=rust)
 ![ESP32-S3](https://img.shields.io/badge/ESP32--S3-ESP--IDF%205.5-red?logo=espressif)
 ![E-paper](https://img.shields.io/badge/e--paper-Spectra%206%20color-green)
+[![Release](https://img.shields.io/github/v/release/andrewpushkin/frogterm?label=release)](https://github.com/andrewpushkin/frogterm/releases/latest)
+
+**Install it from the browser:** [andrewpushkin.github.io/frogterm](https://andrewpushkin.github.io/frogterm/)
+(Chrome or Edge, USB cable), or download `firmware.bin` from the
+[latest release](https://github.com/andrewpushkin/frogterm/releases/latest).
 
 Firmware for a Seeed **reTerminal E1002** (ESP32-S3, 7.3" six-colour E Ink
 Spectra 6 panel) that turns it into a family photo frame:
@@ -159,6 +164,21 @@ In WSL the window appears through WSLg. On Windows itself (no Docker), with
 
 ```powershell
 cargo run --release -p frogterm-pc -- emulator
+```
+
+## Releases
+
+Every push to `main` is a release: its number is the count of commits on
+`main` (tag `v85` for the 85th). Each release has `firmware.bin` (an update,
+written at `0x10000`: the device keeps its settings) and `firmware-full.bin`
+(a first install at `0x0`: bootloader, partition table and app; it erases
+the settings). Neither contains anyone's settings: the device starts in
+settings mode. The same push deploys the [GitHub Pages site](https://andrewpushkin.github.io/frogterm/)
+(`site/`) with a browser installer for that release.
+
+```sh
+espflash write-bin 0x10000 firmware.bin        # update
+espflash write-bin 0x0 firmware-full.bin       # first install
 ```
 
 ## Build and flash

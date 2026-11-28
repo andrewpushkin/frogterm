@@ -1,7 +1,9 @@
 # CI: formatting, clippy and unit tests on the host; the firmware built in
 # the project's Docker image (the same one `make` uses), which is kept in
 # GHCR under a tag made from the Dockerfile's hash and rebuilt only when the
-# Dockerfile changes.
+# Dockerfile changes. Every push to main is a release: version = commits on
+# main (tag v<N>, firmware.bin + firmware-full.bin), and the GitHub Pages
+# site (site/) is deployed with it.
 
 name: CI
 
@@ -79,8 +81,20 @@ jobs:
     name: firmware build
     needs: image
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the version counts the commits
+      - id: version
+        name: Version (commits on main; other branches dev-<commit>)
+        run: |
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            echo "version=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
       - name: Free disk space (the image is ~10 GB)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Pull the dev image
@@ -104,9 +118,77 @@ jobs:
             -e CARGO_HOME=/work/.cargo-docker -e CARGO_TARGET_DIR=/work/build/target frogterm-dev \
             sh -c 'cd firmware && cargo fmt --check && cargo clippy --release -- -D warnings && cargo clippy --release --all-features -- -D warnings'
       - name: make firmware
-        run: make firmware
+        run: make firmware FT_VERSION=${{ steps.version.outputs.version }}
       - uses: actions/upload-artifact@v7
         with:
           name: frogterm-firmware
-          path: build/frogterm.bin
+          path: |
+            build/frogterm.bin
+            build/frogterm-full.bin
           if-no-files-found: error
+
+  release:
+    name: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [host, firmware]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the notes list the commits since the last release
+      - uses: actions/download-artifact@v5
+        with:
+          name: frogterm-firmware
+          path: build
+      - name: Release v${{ needs.firmware.outputs.version }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.firmware.outputs.version }}
+        run: |
+          cp build/frogterm.bin firmware.bin
+          cp build/frogterm-full.bin firmware-full.bin
+          last=$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD 2>/dev/null || true)
+          {
+            echo "frogterm $VERSION — the firmware for the reTerminal E1002."
+            echo
+            echo "- \`firmware.bin\`: update, written at 0x10000; the device keeps its settings."
+            echo "- \`firmware-full.bin\`: first install, written at 0x0; erases the settings (the device then starts in settings mode)."
+            echo "- Or install from the browser: https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/"
+            echo
+            echo "Changes${last:+ since $last}:"
+            echo
+            git log -n 100 --no-merges --format='- %s' ${last:+$last..}HEAD
+          } > notes.md
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" firmware.bin firmware-full.bin --clobber
+          else
+            gh release create "v$VERSION" firmware.bin firmware-full.bin --target "$GITHUB_SHA" \
+              --title "frogterm $VERSION" --notes-file notes.md --latest
+          fi
+
+  pages:
+    name: GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [firmware, release]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v5
+        with:
+          name: frogterm-firmware
+          path: build
+      - name: Build the site
+        run: site/build.sh "${{ needs.firmware.outputs.version }}" "$GITHUB_REPOSITORY" _site
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

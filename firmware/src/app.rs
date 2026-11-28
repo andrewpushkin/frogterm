@@ -228,7 +228,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
         Wake::Button(p) => Some(crate::sleep::gesture_after_wake(p)),
         Wake::Timer | Wake::PowerOn => None,
     };
-    log::info!("frogterm {} woke by {wake:?} ({gesture:?})", env!("CARGO_PKG_VERSION"));
+    log::info!("frogterm {} woke by {wake:?} ({gesture:?})", env!("FT_VERSION"));
     let p = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;

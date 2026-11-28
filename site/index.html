@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>frogterm — a photo, weather and calendar frame for the reTerminal E1002</title>
+<meta name="description" content="Open-source Rust firmware that turns a Seeed reTerminal E1002 into a family photo frame: Google Photos, Google Calendar, weather. Install it from the browser.">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  :root {
+    --paper: #f6f3ea; --ink: #1d1d1b; --soft: #5d5a52; --line: #d9d3c3; --card: #fffdf7;
+    --red: #c8312b; --yellow: #e8b923; --blue: #2b5fa8; --green: #2f8a4c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #161614; --ink: #ebe8df; --soft: #a39f94; --line: #34322d; --card: #1f1e1b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .inks { height: 6px; background: linear-gradient(90deg, var(--ink) 0 16.66%, #fff 0 33.33%, var(--red) 0 50%, var(--yellow) 0 66.66%, var(--blue) 0 83.33%, var(--green) 0); }
+  main { max-width: 56rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+  header { display: grid; gap: .4rem; margin-bottom: 2rem; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.05; margin: 0; letter-spacing: -.02em; }
+  .tagline { font-size: 1.2rem; color: var(--soft); margin: 0; max-width: 40rem; }
+  .release { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: 1rem; }
+  .badge { font-size: .85rem; font-weight: 600; padding: .25rem .65rem; border-radius: 999px; background: var(--green); color: #fff; }
+  .muted { color: var(--soft); font-size: .9rem; }
+  a { color: var(--blue); }
+  .button { display: inline-block; padding: .65rem 1.1rem; border-radius: .5rem; font-weight: 600; text-decoration: none; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  .button.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  figure { margin: 0 0 2.5rem; }
+  figure img { width: 100%; height: auto; display: block; border-radius: .6rem; border: 1px solid var(--line); }
+  figcaption { color: var(--soft); font-size: .9rem; margin-top: .5rem; }
+  h2 { font-size: 1.5rem; margin: 2.5rem 0 .8rem; letter-spacing: -.01em; }
+  h3 { font-size: 1.1rem; margin: 1.4rem 0 .4rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: .6rem; padding: 1rem 1.1rem; }
+  .card h3 { margin-top: 0; }
+  .card p { margin: 0; color: var(--soft); }
+  .dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin-right: .45rem; vertical-align: .05rem; }
+  ol, ul { padding-left: 1.3rem; } li { margin: .3rem 0; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .88em; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .8rem 1rem; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; }
+  .install { display: grid; gap: 1rem; }
+  esp-web-install-button button[slot="activate"] { font: inherit; font-weight: 600; padding: .75rem 1.3rem; border: 0; border-radius: .5rem; background: var(--green); color: #fff; cursor: pointer; }
+  .note { border-left: 4px solid var(--yellow); padding: .2rem 0 .2rem .9rem; color: var(--soft); }
+  footer { margin-top: 3rem; color: var(--soft); font-size: .9rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<div class="inks" aria-hidden="true"></div>
+<main>
+  <header>
+    <h1>frogterm</h1>
+    <p class="tagline">Turns a Seeed <strong>reTerminal E1002</strong> — an ESP32-S3 with a 7.3″ six-colour E Ink panel — into a family photo frame with today's events and the weather. It runs for months on its battery.</p>
+    <div class="release">
+      <span class="badge">Version {{VERSION}}</span>
+      <span class="muted">released {{DATE}}</span>
+      <a class="button primary" href="https://github.com/{{REPO}}/releases/latest">Download</a>
+      <a class="button" href="https://github.com/{{REPO}}">Source on GitHub</a>
+    </div>
+  </header>
+
+  <figure>
+    <img src="emulator.png" width="800" height="564" alt="The frogterm screen: two portrait photos, today's events and the weather, with the device's three buttons and LED on top">
+    <figcaption>The PC emulator: the reTerminal's buttons and LED on top, the panel's six inks below. Faces blurred.</figcaption>
+  </figure>
+
+  <h2>What it shows</h2>
+  <div class="grid">
+    <div class="card"><h3><span class="dot" style="background:var(--red)"></span>Photos</h3><p>A random photo from a shared Google Photos album, with the date it was taken. Portrait photos come in pairs.</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--blue)"></span>Calendar</h3><p>Today's events from your Google calendars, tomorrow's once today is over. Latin, Cyrillic and Hebrew.</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--yellow)"></span>Weather</h3><p>Now and every two hours up to +12 h, with rain chance or the UV index, from Open-Meteo.</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--green)"></span>Battery life</h3><p>Three updates a day and deep sleep in between. Most updates need no Wi-Fi: photos are kept ready in flash.</p></div>
+  </div>
+
+  <h2>Install</h2>
+  <div class="install">
+    <div class="card">
+      <h3>From this page</h3>
+      <p>Connect the reTerminal with a USB-C cable and use Chrome or Edge on a computer.</p>
+      <p style="margin-top:.8rem">
+        <esp-web-install-button manifest="manifest.json">
+          <button slot="activate">Install frogterm {{VERSION}}</button>
+          <span slot="unsupported">This browser cannot flash devices: use Chrome or Edge on a computer.</span>
+          <span slot="not-allowed">Flashing needs a secure page (https).</span>
+        </esp-web-install-button>
+      </p>
+      <p class="muted" style="margin-top:.6rem">Updating keeps the device's settings, unless you choose to erase the device when asked.</p>
+    </div>
+    <div class="card">
+      <h3>With espflash</h3>
+      <p>Download from the <a href="https://github.com/{{REPO}}/releases/latest">latest release</a>:</p>
+<pre>espflash write-bin 0x0 firmware-full.bin      # first install (erases the settings)
+espflash write-bin 0x10000 firmware.bin       # update (keeps the settings)</pre>
+    </div>
+  </div>
+
+  <h2>Set it up</h2>
+  <ol>
+    <li>A newly installed frame has no settings, so it starts in <strong>settings mode</strong>. The panel shows the network <strong>frogterm-setup</strong> and the address <strong>http://192.168.4.1/</strong>.</li>
+    <li>Join that Wi-Fi network with your phone and open the address.</li>
+    <li>Fill in the album link, the city, your calendars and your 2.4 GHz Wi-Fi, then press <em>Save</em>.</li>
+    <li>Press the <strong>green button</strong> on the frame. It joins your Wi-Fi and shows its first photo.</li>
+  </ol>
+  <p class="note">To change a setting later, hold the green button for 10 seconds (the frame's own network) or the right button for 10 seconds (the page on your Wi-Fi, at the address on the panel). The Wi-Fi password and secret calendar links are never shown on the page.</p>
+  <p>Where to find the album link and the calendar addresses: <a href="https://github.com/{{REPO}}#where-to-get-your-real-data">the README</a>.</p>
+
+  <h2>Buttons and sounds</h2>
+  <table>
+    <tr><th>Green</th><td>Sync now: new photos, weather and events</td></tr>
+    <tr><th>Left / right</th><td>Previous / next stored photo, no Wi-Fi</td></tr>
+    <tr><th>Green or right, held 10 s</th><td>Settings mode</td></tr>
+    <tr><th>Short chirp</th><td>Button press accepted (buttons act when let go)</td></tr>
+    <tr><th>Three short pips</th><td>Busy: the press is ignored; try again when the LED is off</td></tr>
+    <tr><th>One beep / three low beeps</th><td>Ready after a good / failed update</td></tr>
+  </table>
+
+  <footer>
+    frogterm {{VERSION}} · MIT licence · written in Rust with ESP-IDF ·
+    <a href="https://github.com/{{REPO}}/releases">all releases</a>
+  </footer>
+</main>
+</body>
+</html>
