@@ -13,7 +13,7 @@ use crate::dither::{dither_area, veil};
 use crate::framebuf::FrameBuffer;
 use crate::info::Info;
 use crate::layout::{
-    draw_events_box, draw_photo_counter, draw_photo_date, draw_weather_box, events_rect, weather_rect, Backdrop, EventsInfo,
+    draw_events_box, draw_photo_counter, draw_photo_date, draw_weather_box, draw_weather_details, events_rect, weather_rect, Backdrop, EventsInfo,
 };
 use crate::schedule::{self, UpdatePlan, WakePlan};
 use crate::weather::Forecast;
@@ -510,6 +510,10 @@ pub fn compose(
     let (events, tomorrow) = info.events_for(today);
     let agenda = calendar::agenda(events, tomorrow, now_hm);
     draw_weather_box(&mut fb, info.forecast.as_ref().and_then(|f| f.window(now)), backdrop);
+    // the third column (+4 h) in more detail, over the box
+    if let Some(ahead) = info.forecast.as_ref().and_then(|f| f.window(now)).and_then(|mut w| w.nth(2)) {
+        draw_weather_details(&mut fb, ahead);
+    }
     draw_events_box(
         &mut fb,
         &EventsInfo {

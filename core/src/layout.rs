@@ -64,6 +64,8 @@ pub struct EventsInfo<'a> {
 
 static TITLE_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB12_tf>();
 static SMALL_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB10_tf>();
+/// Regular, not bold: the weather details line must fit the box width.
+static DETAILS_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR10_tf>();
 static TEMP_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB18_tf>();
 
 // weather box rows (tops, relative to the box)
@@ -97,6 +99,19 @@ pub fn rain_or_uv(slot: &HourSlot) -> Option<(String, Ink)> {
 /// Weather column heading, e.g. "14:00".
 pub fn hour_label(hour: u8) -> String {
     format!("{hour:02}:00")
+}
+
+/// The line over the weather box about the hour 4 h ahead, e.g.
+/// "17:00  Precipitation: 10%  Humidity: 61%  Wind: 11 km/h" (unknown values left out).
+pub fn details_label(slot: &HourSlot) -> String {
+    let mut s = format!("{}  Precipitation: {}%", hour_label(slot.hour), slot.precip_pct);
+    if let Some(h) = slot.humidity_pct {
+        s.push_str(&format!("  Humidity: {h}%"));
+    }
+    if let Some(w) = slot.wind_kmh {
+        s.push_str(&format!("  Wind: {} km/h", w.round() as i32));
+    }
+    s
 }
 
 /// Event time column: "13:00-14:00", "22:00-..." (ends after today) or "all day".
@@ -268,6 +283,22 @@ pub fn draw_events_box(fb: &mut FrameBuffer, info: &EventsInfo, backdrop: Backdr
         let more = format!("+{} more", events.len() - shown);
         pen.text(&mut t, &SMALL_FONT, &more, at(title_x, y + 2), HorizontalAlignment::Left, Ink::Blue);
     }
+}
+
+/// Where the 4-hours-ahead line goes: a strip just above the weather box.
+pub fn weather_details_rect() -> Rectangle {
+    const H: u32 = 18;
+    let w = weather_rect();
+    Rectangle::new(Point::new(w.top_left.x, w.top_left.y - H as i32 - 2), Size::new(BOX_W, H))
+}
+
+/// The weather 4 h ahead (see `details_label`): a small label without a box
+/// (black, white outline) right-aligned over the weather box.
+pub fn draw_weather_details(fb: &mut FrameBuffer, slot: &HourSlot) {
+    let r = weather_details_rect();
+    let mut t = fb.clipped(&r);
+    let at = Point::new(r.top_left.x + r.size.width as i32 - 2, r.top_left.y + 2);
+    Pen { halo: true }.text(&mut t, &DETAILS_FONT, &details_label(slot), at, HorizontalAlignment::Right, Ink::Black);
 }
 
 /// Where the photo's date goes: the top-right corner of its screen area
@@ -654,6 +685,34 @@ mod tests {
         assert!(drawn(Ink::Black) && drawn(Ink::White), "black text with a white outline");
         assert_ne!(fb.as_bytes(), draw(4, 10).as_bytes());
         untouched_outside(&draw(20, 20), &r);
+    }
+
+    #[test]
+    fn details_say_precipitation_humidity_and_wind() {
+        let mut s = slots(14.0)[2].clone();
+        s.precip_pct = 10;
+        s.humidity_pct = Some(61);
+        s.wind_kmh = Some(11.4);
+        assert_eq!(details_label(&s), "10:00  Precipitation: 10%  Humidity: 61%  Wind: 11 km/h");
+        s.humidity_pct = None;
+        s.wind_kmh = None;
+        assert_eq!(details_label(&s), "10:00  Precipitation: 10%", "unknown values are left out");
+    }
+
+    #[test]
+    fn details_sit_just_above_the_weather_box_and_fit() {
+        let (d, w) = (weather_details_rect(), weather_rect());
+        assert_eq!((d.top_left.x, d.size.width), (w.top_left.x, w.size.width));
+        assert!(d.top_left.y + d.size.height as i32 <= w.top_left.y, "does not overlap the box");
+        assert!(d.top_left.y + d.size.height as i32 >= w.top_left.y - 4, "sits right on it");
+        let mut s = slots(14.0)[2].clone();
+        (s.hour, s.precip_pct, s.humidity_pct, s.wind_kmh) = (23, 100, Some(100), Some(188.0));
+        let widest = details_label(&s);
+        assert!(text_width(&DETAILS_FONT, &widest) + 4 <= d.size.width as i32, "{widest} is too wide");
+        let mut fb = FrameBuffer::new(Ink::Green);
+        draw_weather_details(&mut fb, &s);
+        untouched_outside(&fb, &d);
+        assert!(ink_in_body(&fb, &d, 0), "the line is drawn");
     }
 
     #[test]
