@@ -14,6 +14,8 @@ harness = false
 default = []
 # Show six colour bars instead of the normal update (panel bring-up).
 bars = []
+# An empty NVS gets ../config.toml (checked at build time) as its settings.
+seed-config = []
 
 [dependencies]
 anyhow = "1"

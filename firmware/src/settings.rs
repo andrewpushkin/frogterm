@@ -1,41 +1,52 @@
-//! Settings from `config.toml`, baked in at build time by `build.rs`.
+//! The settings: the text of a `config.toml` in NVS (namespace `frogterm`,
+//! blob `config`), written by the settings page and read at every wake.
+//! With the `seed-config` feature an empty NVS gets the `config.toml` the
+//! firmware was built with.
 
-pub struct Settings {
-    pub album_url: &'static str,
-    pub city: &'static str,
-    /// Label in the events box header.
-    pub place: &'static str,
-    pub coords: Option<(f64, f64)>,
-    pub calendars: Vec<&'static str>,
-    pub opacity: u8,
-    pub wifi_ssid: &'static str,
-    pub wifi_password: &'static str,
-    /// Local `(hour, minute)` of the daily screen updates.
-    pub update_times: Vec<(u8, u8)>,
-    pub photo_batch: u8,
-    pub refresh_minutes: u32,
-    /// POSIX TZ string (validated at build time).
-    pub timezone: &'static str,
+use anyhow::{Context, Result};
+use esp_idf_svc::nvs::{EspNvs, NvsDefault};
+use frogterm_core::config::Config;
+
+const BLOB: &str = "config";
+
+/// The stored settings text, if there is one.
+pub fn load_text(nvs: &EspNvs<NvsDefault>) -> Option<String> {
+    let len = nvs.blob_len(BLOB).ok()??;
+    let mut buf = vec![0u8; len];
+    let bytes = nvs.get_blob(BLOB, &mut buf).ok()??;
+    Some(String::from_utf8_lossy(bytes).into_owned())
 }
 
-pub fn settings() -> Settings {
-    let num = |s: &str| s.parse::<f64>().ok();
-    Settings {
-        album_url: env!("FT_ALBUM_URL"),
-        city: env!("FT_CITY"),
-        place: env!("FT_PLACE"),
-        coords: num(env!("FT_LAT")).zip(num(env!("FT_LON"))),
-        calendars: env!("FT_CALENDARS").split("\\n").filter(|s| !s.is_empty()).collect(),
-        opacity: env!("FT_OPACITY").parse().unwrap_or(50),
-        wifi_ssid: env!("FT_WIFI_SSID"),
-        wifi_password: env!("FT_WIFI_PASSWORD"),
-        update_times: frogterm_core::schedule::parse_times(env!("FT_UPDATE_TIMES"))
-            .unwrap_or_else(|| frogterm_core::schedule::DEFAULT_TIMES.to_vec()),
-        photo_batch: env!("FT_PHOTO_BATCH").parse().unwrap_or(10),
-        refresh_minutes: env!("FT_REFRESH_MINUTES").parse().unwrap_or(480),
-        timezone: env!("FT_TIMEZONE"),
+#[allow(dead_code)] // used by the settings page (next step)
+pub fn save_text(nvs: &EspNvs<NvsDefault>, text: &str) -> Result<()> {
+    nvs.set_blob(BLOB, text.as_bytes()).context("store the settings in NVS")
+}
+
+/// The stored settings if the device can run on them (the reason is logged
+/// otherwise; never the text, which holds secrets).
+pub fn load(nvs: &EspNvs<NvsDefault>) -> Option<Config> {
+    seed(nvs);
+    let Some(text) = load_text(nvs) else {
+        log::warn!("no settings stored");
+        return None;
+    };
+    Config::usable(&text, true).map_err(|e| log::warn!("the stored settings cannot be used: {e:#}")).ok()
+}
+
+/// An empty NVS gets the settings the firmware was built with.
+#[cfg(feature = "seed-config")]
+fn seed(nvs: &EspNvs<NvsDefault>) {
+    if matches!(nvs.blob_len(BLOB), Ok(Some(_))) {
+        return;
+    }
+    match save_text(nvs, include_str!(concat!(env!("OUT_DIR"), "/seed.toml"))) {
+        Ok(()) => log::info!("settings seeded from the build's config.toml"),
+        Err(e) => log::warn!("{e:#}"),
     }
 }
+
+#[cfg(not(feature = "seed-config"))]
+fn seed(_: &EspNvs<NvsDefault>) {}
 
 /// Host part of a URL, for logs (links contain secrets).
 pub fn host(url: &str) -> &str {

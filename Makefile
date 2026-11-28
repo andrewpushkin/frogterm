@@ -29,9 +29,9 @@ USBIPD_BUSID ?=
 
 all: firmware
 
-# Firmware for the reTerminal (config.toml is baked in) -> build/frogterm.bin
+# Firmware for the reTerminal -> build/frogterm.bin. Its settings live in the
+# device (the settings page); FEATURES=seed-config gives an empty device config.toml.
 firmware: image
-	@test -f config.toml || { echo "config.toml not found: cp config.example.toml config.toml and edit it"; exit 2; }
 	$(DOCKER) sh -c 'cd firmware && cargo build --release $(if $(FEATURES),--features $(FEATURES))'
 	$(DOCKER) espflash save-image --chip esp32s3 --flash-size 32mb --partition-table firmware/partitions.csv $(ELF) build/frogterm.bin
 	@ls -l build/frogterm.bin

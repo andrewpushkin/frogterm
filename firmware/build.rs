@@ -1,34 +1,16 @@
-//! Bakes `../config.toml` into the firmware as `FT_*` environment variables,
-//! validated with the same code as the PC tools.
-
-use frogterm_core::config;
+//! The settings are not built in: the device keeps them in NVS and edits
+//! them with its settings page. With the `seed-config` feature, `../config.toml`
+//! (validated with the device's rules) seeds an empty NVS.
 
 fn main() -> anyhow::Result<()> {
     embuild::espidf::sysenv::output();
-    println!("cargo:rerun-if-changed=../config.toml");
-    println!("cargo:rerun-if-changed=../core/src/config.rs");
-    let c = config::Config::load(std::path::Path::new("../config.toml"))?;
-    let ssid = c.wifi_ssid.clone().filter(|s| !s.is_empty());
-    let Some(ssid) = ssid else { anyhow::bail!("wifi_ssid missing in config.toml") };
-    let password = c.wifi_password.clone().unwrap_or_default();
-    let (lat, lon) = c.coordinates().map_or((String::new(), String::new()), |(a, b)| (a.to_string(), b.to_string()));
-    for (k, v) in [
-        ("FT_ALBUM_URL", c.album_url.clone()),
-        ("FT_CITY", c.city.clone()),
-        ("FT_PLACE", c.label().to_string()),
-        ("FT_LAT", lat),
-        ("FT_LON", lon),
-        ("FT_CALENDARS", c.calendars.join("\n")),
-        ("FT_OPACITY", c.overlay_opacity.to_string()),
-        ("FT_WIFI_SSID", ssid),
-        ("FT_WIFI_PASSWORD", password),
-        ("FT_UPDATE_TIMES", c.update_times.join(",")),
-        ("FT_PHOTO_BATCH", c.photo_batch.to_string()),
-        ("FT_REFRESH_MINUTES", c.refresh_minutes.to_string()),
-        ("FT_TIMEZONE", c.timezone.clone()),
-    ] {
-        // newlines are not allowed in rustc-env values: escape them
-        println!("cargo:rustc-env={k}={}", v.replace('\n', "\\n"));
+    if std::env::var_os("CARGO_FEATURE_SEED_CONFIG").is_some() {
+        println!("cargo:rerun-if-changed=../config.toml");
+        println!("cargo:rerun-if-changed=../core/src/config.rs");
+        let text = std::fs::read_to_string("../config.toml").map_err(|e| anyhow::anyhow!("seed-config: cannot read config.toml ({e})"))?;
+        frogterm_core::config::Config::usable(&text, true).map_err(|e| anyhow::anyhow!("seed-config: config.toml: {e:#}"))?;
+        let out = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("seed.toml");
+        std::fs::write(out, text)?;
     }
     Ok(())
 }

@@ -13,6 +13,7 @@ use frogterm_core::album::{self, Photo};
 use frogterm_core::app::{self, Device, Led, Online, Readings, State};
 use frogterm_core::beep::Tone;
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
+use frogterm_core::config::Config;
 use frogterm_core::framebuf::{FrameBuffer, Ink};
 use frogterm_core::info::Info;
 use frogterm_core::photo_list::{after_refresh, PhotoList};
@@ -23,7 +24,7 @@ use crate::board::Board;
 use crate::epd::Epd;
 use crate::net::{self, HttpStatus, Net};
 use crate::rtc::Rtc;
-use crate::settings::{host, settings, Settings};
+use crate::settings::host;
 use crate::sleep::{button_held, deep_sleep, wake_cause};
 use crate::store::Store;
 
@@ -44,7 +45,8 @@ struct Nvs {
 }
 
 impl Nvs {
-    fn open(part: EspDefaultNvsPartition) -> Result<(Nvs, State)> {
+    /// The state, and the settings if they are usable.
+    fn open(part: EspDefaultNvsPartition) -> Result<(Nvs, State, Option<Config>)> {
         let nvs = EspNvs::new(part, "frogterm", true)?;
         let mut ap = [0u8; 7];
         let last_ap = match nvs.get_blob("last_ap", &mut ap)? {
@@ -71,7 +73,8 @@ impl Nvs {
             },
             pending_sync: nvs.get_u8("pending_sync")? == Some(1),
         };
-        Ok((Nvs { nvs, last_ap }, state))
+        let cfg = crate::settings::load(&nvs);
+        Ok((Nvs { nvs, last_ap }, state, cfg))
     }
 
     fn save(&mut self, s: &State) {
@@ -98,7 +101,7 @@ impl Nvs {
 
 /// The reTerminal as `app::Device`.
 struct Reterminal<'d> {
-    cfg: &'d Settings,
+    cfg: &'d Config,
     board: Board<'d>,
     epd: Epd<'d>,
     rtc: Rtc<'d>,
@@ -160,7 +163,8 @@ impl Device for Reterminal<'_> {
         let preload = if batch > 0 { Some(crate::spawn_with_internal_stack("preload", 8 * 1024, || Store.load_list())?) } else { None };
         let modem = self.modem.take().ok_or_else(|| anyhow!("Wi-Fi was already used in this wake"))?;
         let cfg = self.cfg;
-        let mut net = Net::connect(modem, self.sysloop.clone(), self.nvs_part.clone(), cfg.wifi_ssid, cfg.wifi_password, self.nvs.last_ap)?;
+        let (ssid, password) = (cfg.wifi_ssid.as_deref().unwrap_or(""), cfg.wifi_password.as_deref().unwrap_or(""));
+        let mut net = Net::connect(modem, self.sysloop.clone(), self.nvs_part.clone(), ssid, password, self.nvs.last_ap)?;
         tick("Wi-Fi up");
         if net.joined.is_some() {
             self.nvs.last_ap = net.joined;
@@ -207,11 +211,10 @@ fn run_inner() -> Result<std::convert::Infallible> {
     let p = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;
-    let cfg = settings();
-    if let Some(zone) = tz::Zone::parse(cfg.timezone) {
-        tz::set_zone(zone);
+    let (mut nvs, mut state, cfg) = Nvs::open(nvs_part.clone())?;
+    if let Some(c) = &cfg {
+        tz::set_zone(c.zone());
     }
-    let (mut nvs, mut state) = Nvs::open(nvs_part.clone())?;
     let mut rtc = Rtc::new(p.i2c0, p.pins.gpio19, p.pins.gpio20)?;
     let rtc_now = rtc.read().unwrap_or_else(|e| {
         log::warn!("RTC read failed: {e:#}");
@@ -257,12 +260,18 @@ fn run_inner() -> Result<std::convert::Infallible> {
         deep_sleep(24 * 3600, schedule::arm_button(button_held()));
     }
 
+    let Some(cfg) = cfg else {
+        log::warn!("no usable settings: sleeping until a button is pressed");
+        crate::board::set_led(Led::Off);
+        deep_sleep(schedule::when_time_unknown(), true)
+    };
+    let times = cfg.update_times();
     let rules = app::Config {
-        update_times: &cfg.update_times,
+        update_times: &times,
         refresh_minutes: cfg.refresh_minutes,
         photo_batch: cfg.photo_batch,
-        opacity: cfg.opacity,
-        place: cfg.place,
+        opacity: cfg.overlay_opacity,
+        place: cfg.label(),
         panel_rest: true,
     };
     let mut dev = Reterminal { cfg: &cfg, board, epd, rtc, rtc_now, nvs, modem: Some(p.modem), sysloop, nvs_part };
@@ -292,7 +301,7 @@ fn unix_now() -> Option<i64> {
 
 /// Online part: fresh weather + calendars, and `batch` new ready-to-show
 /// photo screens (0 = none).
-fn online(cfg: &Settings, net: &mut Net, now: i64, batch: u8, stored_list: Option<PhotoList>) -> Result<Online> {
+fn online(cfg: &Config, net: &mut Net, now: i64, batch: u8, stored_list: Option<PhotoList>) -> Result<Online> {
     let (today, _) = tz::to_local(now);
     let mut store = Store;
     // weather and calendars download in the background while we do the photos
@@ -304,7 +313,7 @@ fn online(cfg: &Settings, net: &mut Net, now: i64, batch: u8, stored_list: Optio
             let t = std::time::Instant::now();
             let mut list = photo_list(cfg, net, &mut store, now, stored_list)?;
             let screens: Vec<FrameBuffer> = (0..batch)
-                .filter_map(|_| random_screen(&mut list, &mut store, cfg.opacity, now).map_err(|e| log::warn!("{e:#}")).ok())
+                .filter_map(|_| random_screen(&mut list, &mut store, cfg.overlay_opacity, now).map_err(|e| log::warn!("{e:#}")).ok())
                 .collect();
             log::info!("downloaded {} photo screens in {:.1} s", screens.len(), t.elapsed().as_secs_f32());
             screens
@@ -323,16 +332,16 @@ fn online(cfg: &Settings, net: &mut Net, now: i64, batch: u8, stored_list: Optio
 }
 
 /// Cached list from flash, re-read from Google when missing or a week old.
-fn photo_list(cfg: &Settings, net: &mut Net, store: &mut Store, now: i64, old: Option<PhotoList>) -> Result<PhotoList> {
-    if let Some(l) = old.as_ref().filter(|l| l.is_fresh_for(cfg.album_url, now as u64)) {
+fn photo_list(cfg: &Config, net: &mut Net, store: &mut Store, now: i64, old: Option<PhotoList>) -> Result<PhotoList> {
+    if let Some(l) = old.as_ref().filter(|l| l.is_fresh_for(&cfg.album_url, now as u64)) {
         log::info!("photo list: {} photos, {:.1} days old", l.photos.len(), l.age_days(now as u64));
         return old.ok_or_else(|| anyhow!("no photo list"));
     }
-    let (fetched, complete) = read_album(net, cfg.album_url);
+    let (fetched, complete) = read_album(net, &cfg.album_url);
     log::info!("album read: {} photos, complete: {complete}", fetched.len());
     // a failed read keeps the old list as it is in flash: nothing to save
     let keeps_old = !(complete && !fetched.is_empty()) && old.is_some();
-    let list = after_refresh(old, fetched, complete, cfg.album_url, now as u64).ok_or_else(|| anyhow!("no photo list"))?;
+    let list = after_refresh(old, fetched, complete, &cfg.album_url, now as u64).ok_or_else(|| anyhow!("no photo list"))?;
     if !keeps_old {
         if let Err(e) = store.save_list(&list) {
             log::warn!("could not save the photo list: {e:#}");
@@ -457,12 +466,12 @@ fn random_screen(list: &mut PhotoList, store: &mut Store, opacity: u8, now: i64)
     bail!("{ATTEMPTS} tries in a row failed")
 }
 
-fn fetch_weather(cfg: &Settings) -> Result<Forecast> {
+fn fetch_weather(cfg: &Config) -> Result<Forecast> {
     let t = std::time::Instant::now();
-    let (lat, lon) = match cfg.coords {
+    let (lat, lon) = match cfg.coordinates() {
         Some(c) => c,
         None => {
-            let body = net::get_bytes(&weather::geocode_url(cfg.city))?;
+            let body = net::get_bytes(&weather::geocode_url(&cfg.city))?;
             let place = weather::parse_geocode(&String::from_utf8_lossy(&body))?;
             (place.latitude, place.longitude)
         }
@@ -475,7 +484,7 @@ fn fetch_weather(cfg: &Settings) -> Result<Forecast> {
 
 /// All of today's and tomorrow's events of all calendars (`None` if none could
 /// be read; none configured is an empty day) and how many calendars failed.
-fn fetch_calendars(cfg: &Settings, today: frogterm_core::date::Date) -> (Option<calendar::TwoDays>, usize) {
+fn fetch_calendars(cfg: &Config, today: frogterm_core::date::Date) -> (Option<calendar::TwoDays>, usize) {
     if cfg.calendars.is_empty() {
         return (Some((Vec::new(), Vec::new())), 0);
     }
