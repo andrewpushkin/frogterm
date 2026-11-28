@@ -64,8 +64,6 @@ pub struct EventsInfo<'a> {
 
 static TITLE_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB12_tf>();
 static SMALL_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB10_tf>();
-/// Regular, not bold: the weather details line must fit the box width.
-static DETAILS_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR10_tf>();
 static TEMP_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB18_tf>();
 
 // weather box rows (tops, relative to the box)
@@ -101,17 +99,21 @@ pub fn hour_label(hour: u8) -> String {
     format!("{hour:02}:00")
 }
 
-/// The line over the weather box about the hour 4 h ahead, e.g.
-/// "17:00  Precipitation: 10%  Humidity: 61%  Wind: 11 km/h" (unknown values left out).
-pub fn details_label(slot: &HourSlot) -> String {
-    let mut s = format!("{}  Precipitation: {}%", hour_label(slot.hour), slot.precip_pct);
-    if let Some(h) = slot.humidity_pct {
-        s.push_str(&format!("  Humidity: {h}%"));
-    }
-    if let Some(w) = slot.wind_kmh {
-        s.push_str(&format!("  Wind: {} km/h", w.round() as i32));
-    }
-    s
+/// What the weather tab shows for the hour 4 h ahead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Detail {
+    /// Relative humidity, e.g. "61%" (droplet icon).
+    Humidity(String),
+    /// Wind speed, e.g. "11 km/h" (wind icon).
+    Wind(String),
+}
+
+/// The tab's values, unknown ones left out (no precipitation: the box's
+/// columns show it already).
+pub fn details(slot: &HourSlot) -> Vec<Detail> {
+    let humidity = slot.humidity_pct.map(|h| Detail::Humidity(format!("{h}%")));
+    let wind = slot.wind_kmh.map(|w| Detail::Wind(format!("{} km/h", w.round() as i32)));
+    humidity.into_iter().chain(wind).collect()
 }
 
 /// Event time column: "13:00-14:00", "22:00-..." (ends after today) or "all day".
@@ -285,20 +287,71 @@ pub fn draw_events_box(fb: &mut FrameBuffer, info: &EventsInfo, backdrop: Backdr
     }
 }
 
-/// Where the 4-hours-ahead line goes: a strip just above the weather box.
-pub fn weather_details_rect() -> Rectangle {
-    const H: u32 = 18;
-    let w = weather_rect();
-    Rectangle::new(Point::new(w.top_left.x, w.top_left.y - H as i32 - 2), Size::new(BOX_W, H))
+// weather tab: a small white box on the weather box's top edge (right end)
+const TAB_H: u32 = 18;
+/// Rows the tab shares with the weather box's top border.
+const TAB_OVERLAP: i32 = 2;
+const TAB_PAD: i32 = 5;
+const DROP_W: i32 = 9;
+const WIND_W: i32 = 14;
+const ICON_GAP: i32 = 2;
+const DETAIL_GAP: i32 = 8;
+
+fn detail_parts(d: &Detail) -> (i32, &str) {
+    match d {
+        Detail::Humidity(s) => (DROP_W, s),
+        Detail::Wind(s) => (WIND_W, s),
+    }
 }
 
-/// The weather 4 h ahead (see `details_label`): a small label without a box
-/// (black, white outline) right-aligned over the weather box.
-pub fn draw_weather_details(fb: &mut FrameBuffer, slot: &HourSlot) {
-    let r = weather_details_rect();
-    let mut t = fb.clipped(&r);
-    let at = Point::new(r.top_left.x + r.size.width as i32 - 2, r.top_left.y + 2);
-    Pen { halo: true }.text(&mut t, &DETAILS_FONT, &details_label(slot), at, HorizontalAlignment::Right, Ink::Black);
+/// Where the weather tab goes for these `details` (sized to fit them), or
+/// `None` if there is nothing to show.
+pub fn weather_tab_rect(details: &[Detail]) -> Option<Rectangle> {
+    if details.is_empty() {
+        return None;
+    }
+    let content: i32 = details.iter().map(|d| detail_parts(d)).map(|(icon, s)| icon + ICON_GAP + text_width(&SMALL_FONT, s)).sum();
+    let w = 2 * TAB_PAD + content + DETAIL_GAP * (details.len() as i32 - 1);
+    let b = weather_rect();
+    let right = b.top_left.x + BOX_W as i32;
+    Some(Rectangle::new(Point::new(right - w, b.top_left.y - TAB_H as i32 + TAB_OVERLAP), Size::new(w as u32, TAB_H)))
+}
+
+/// The weather 4 h ahead (see `details`): icons and values in a white tab
+/// sitting on the weather box.
+pub fn draw_weather_tab(fb: &mut FrameBuffer, slot: &HourSlot) {
+    let details = details(slot);
+    let Some(r) = weather_tab_rect(&details) else { return };
+    let mut t = frame(fb, &r, Backdrop::Solid);
+    let pen = Pen { halo: false };
+    let mut x = r.top_left.x + TAB_PAD;
+    let y = r.top_left.y;
+    for d in &details {
+        let (icon_w, label) = detail_parts(d);
+        match d {
+            Detail::Humidity(_) => droplet_icon(&mut t, Point::new(x, y + 3)),
+            Detail::Wind(_) => wind_icon(&mut t, Point::new(x, y + 3)),
+        }
+        x += icon_w + ICON_GAP;
+        pen.text(&mut t, &SMALL_FONT, label, Point::new(x, y + 3), HorizontalAlignment::Left, Ink::Black);
+        x += text_width(&SMALL_FONT, label) + DETAIL_GAP;
+    }
+}
+
+/// 9x12 blue droplet (humidity).
+fn droplet_icon<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point) {
+    let blue = PrimitiveStyle::with_fill(Ink::Blue);
+    let _ = Triangle::new(p + Point::new(4, 0), p + Point::new(0, 7), p + Point::new(8, 7)).into_styled(blue).draw(t);
+    let _ = Circle::new(p + Point::new(0, 3), 9).into_styled(blue).draw(t);
+}
+
+/// 14x11 wind: three gusts, the top one curling up at its end.
+fn wind_icon<D: DrawTarget<Color = Ink>>(t: &mut D, p: Point) {
+    let line = PrimitiveStyle::with_stroke(Ink::Black, 1);
+    let _ = Line::new(p + Point::new(0, 4), p + Point::new(9, 4)).into_styled(line).draw(t);
+    let _ = Arc::with_center(p + Point::new(9, 2), 5, 270.0.deg(), 270.0.deg()).into_styled(line).draw(t);
+    let _ = Line::new(p + Point::new(0, 7), p + Point::new(13, 7)).into_styled(line).draw(t);
+    let _ = Line::new(p + Point::new(2, 10), p + Point::new(8, 10)).into_styled(line).draw(t);
 }
 
 /// Where the photo's date goes: the top-right corner of its screen area
@@ -687,32 +740,38 @@ mod tests {
         untouched_outside(&draw(20, 20), &r);
     }
 
-    #[test]
-    fn details_say_precipitation_humidity_and_wind() {
-        let mut s = slots(14.0)[2].clone();
-        s.precip_pct = 10;
-        s.humidity_pct = Some(61);
-        s.wind_kmh = Some(11.4);
-        assert_eq!(details_label(&s), "10:00  Precipitation: 10%  Humidity: 61%  Wind: 11 km/h");
-        s.humidity_pct = None;
-        s.wind_kmh = None;
-        assert_eq!(details_label(&s), "10:00  Precipitation: 10%", "unknown values are left out");
+    fn ahead(humidity_pct: Option<u8>, wind_kmh: Option<f32>) -> HourSlot {
+        HourSlot { precip_pct: 100, humidity_pct, wind_kmh, ..slots(14.0)[2].clone() }
     }
 
     #[test]
-    fn details_sit_just_above_the_weather_box_and_fit() {
-        let (d, w) = (weather_details_rect(), weather_rect());
-        assert_eq!((d.top_left.x, d.size.width), (w.top_left.x, w.size.width));
-        assert!(d.top_left.y + d.size.height as i32 <= w.top_left.y, "does not overlap the box");
-        assert!(d.top_left.y + d.size.height as i32 >= w.top_left.y - 4, "sits right on it");
-        let mut s = slots(14.0)[2].clone();
-        (s.hour, s.precip_pct, s.humidity_pct, s.wind_kmh) = (23, 100, Some(100), Some(188.0));
-        let widest = details_label(&s);
-        assert!(text_width(&DETAILS_FONT, &widest) + 4 <= d.size.width as i32, "{widest} is too wide");
+    fn tab_shows_humidity_and_wind_not_precipitation() {
+        let h = |s: &str| Detail::Humidity(s.into());
+        let w = |s: &str| Detail::Wind(s.into());
+        assert_eq!(details(&ahead(Some(61), Some(11.4))), [h("61%"), w("11 km/h")]);
+        assert_eq!(details(&ahead(None, Some(6.5))), [w("7 km/h")], "unknown values are left out");
+        assert_eq!(details(&ahead(None, None)), []);
+    }
+
+    #[test]
+    fn tab_sits_on_the_weather_box_right_end() {
+        let (b, wide) = (weather_rect(), details(&ahead(Some(100), Some(188.0))));
+        let r = weather_tab_rect(&wide).unwrap();
+        assert_eq!(r.bottom_right().unwrap().x, b.bottom_right().unwrap().x, "right edges line up");
+        assert_eq!(r.top_left.y + r.size.height as i32, b.top_left.y + TAB_OVERLAP, "on the box's top border");
+        let narrow = weather_tab_rect(&details(&ahead(Some(5), None))).unwrap();
+        assert!(narrow.size.width < r.size.width, "sized to what it shows");
+        assert_eq!(weather_tab_rect(&[]), None);
         let mut fb = FrameBuffer::new(Ink::Green);
-        draw_weather_details(&mut fb, &s);
-        untouched_outside(&fb, &d);
-        assert!(ink_in_body(&fb, &d, 0), "the line is drawn");
+        draw_weather_tab(&mut fb, &ahead(Some(100), Some(188.0)));
+        untouched_outside(&fb, &r);
+        let blue = (0..r.size.height).flat_map(|y| (0..r.size.width).map(move |x| (x, y)));
+        let count = |ink| blue.clone().filter(|&(x, y)| fb.get(r.top_left.x as u32 + x, r.top_left.y as u32 + y) == ink).count();
+        assert!(count(Ink::Blue) > 20, "droplet");
+        assert_eq!(count(Ink::Green), 0, "white box, no photo inside");
+        let mut none = FrameBuffer::new(Ink::Green);
+        draw_weather_tab(&mut none, &ahead(None, None));
+        assert_eq!(none.as_bytes(), FrameBuffer::new(Ink::Green).as_bytes(), "nothing to show: no tab");
     }
 
     #[test]
@@ -741,7 +800,9 @@ mod tests {
         assert_eq!(left_margin, right_margin, "not symmetric");
         let bottom = HEIGHT as i32 - 1 - e.bottom_right().unwrap().y;
         assert!((0..=16).contains(&bottom), "not at the bottom: {bottom}");
-        let covered = 2 * e.size.width * e.size.height;
+        // with the weather tab at its widest (the rows it shares with the box count once)
+        let tab = weather_tab_rect(&[Detail::Humidity("100%".into()), Detail::Wind("188 km/h".into())]).unwrap();
+        let covered = 2 * e.size.width * e.size.height + tab.size.width * (tab.size.height - TAB_OVERLAP as u32);
         assert!(covered * 5 <= WIDTH * HEIGHT, "boxes cover {covered} px, more than 20 %");
     }
 
