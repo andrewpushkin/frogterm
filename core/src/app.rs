@@ -58,6 +58,9 @@ pub struct State {
     /// The final beep, played when the device is ready again (the panel's
     /// rest is over): `Some(true)` success, `Some(false)` error.
     pub ready_beep: Option<bool>,
+    /// Settings mode ended: a full sync (as after a green press) is due at
+    /// the next wake that is not early.
+    pub pending_sync: bool,
 }
 
 /// Settings the wake logic needs.
@@ -276,6 +279,19 @@ pub fn settings_failed(dev: &mut impl Device, state: &mut State, now: Option<i64
     secs
 }
 
+/// Settings mode ended with usable settings: a full sync as after a green
+/// press, once the panel's rest (after the settings screen) is over. Returns
+/// the seconds to sleep.
+pub fn leave_settings(dev: &mut impl Device, state: &mut State, cfg: &Config, r: Readings) -> u64 {
+    log::info!("settings mode ends: a full sync is due");
+    state.pending_sync = true;
+    let now = r.now.or_else(|| dev.clock());
+    let left = now.filter(|_| cfg.panel_rest).and_then(|now| resting(now, state)).unwrap_or(0);
+    state.target = now.map_or(0, |now| now + left as i64);
+    dev.save_state(state);
+    run(dev, state, cfg, Wake::Timer, r)
+}
+
 /// Seconds the panel still rests after its last refresh, if it does.
 fn resting(now: i64, state: &State) -> Option<u64> {
     schedule::panel_rest(now, state.last_refresh, schedule::PANEL_REST_SECS)
@@ -342,9 +358,11 @@ fn run_lit(dev: &mut impl Device, state: &mut State, cfg: &Config, wake: Wake, r
     // weather+calendar, or also photos
     let unseen_slot = stock::next_unseen(state.seen, state.stock_count, state.current);
     let photos_left = if unseen_slot.is_some() { stock::unseen(state.seen, state.stock_count) } else { 0 };
+    // so is the wake after settings mode
+    let pending_sync = std::mem::take(&mut state.pending_sync);
     let mut plan = match r.now {
         // the green button always syncs: new photos, weather and calendar
-        _ if press == Some(Press::Update) => UpdatePlan::RefreshAll,
+        _ if press == Some(Press::Update) || pending_sync => UpdatePlan::RefreshAll,
         Some(now) => schedule::plan_update(
             now,
             stored_info.as_ref().map(|i| (i.fetched_at, i.date)),
@@ -1052,5 +1070,33 @@ mod tests {
         assert_eq!(secs, 3600, "until the planned wake");
         assert_eq!(dev.leds, vec![Led::Off]);
         assert!(dev.shown.is_empty(), "the panel as it was");
+    }
+
+    #[test]
+    fn leaving_settings_syncs_once_the_panel_rest_is_over() {
+        let (mut dev, mut st) = stocked(3);
+        st.seen = stock::mark(0, 0);
+        show_settings(&mut dev, &mut st, AP_SSID, AP_ADDRESS, Some(T0)).unwrap();
+        dev.next_batch = 10;
+        let secs = leave_settings(&mut dev, &mut st, &cfg(), at(T0 + 60));
+        assert_eq!(secs, 120, "waits for the panel's rest");
+        assert!(dev.online_calls.is_empty() && dev.beeps.is_empty());
+        assert_eq!(dev.leds.last(), Some(&Led::On), "busy while the panel rests");
+        assert_eq!(dev.saved.as_ref().map(|s| s.pending_sync), Some(true), "kept through deep sleep");
+        run(&mut dev, &mut st, &cfg(), Wake::Timer, at(T0 + 180));
+        assert_eq!(dev.online_calls, vec![3], "then a full sync, as after a green press");
+        assert_eq!(dev.shown.last(), Some(&Some(10)));
+        assert!(!st.pending_sync, "once");
+        assert_eq!(st.target, schedule::next_update(T0 + 180, &[(6, 0)]));
+    }
+
+    #[test]
+    fn leaving_settings_after_the_rest_syncs_at_once() {
+        let (mut dev, mut st) = stocked(3);
+        st.seen = stock::mark(0, 0);
+        show_settings(&mut dev, &mut st, AP_SSID, AP_ADDRESS, Some(T0)).unwrap();
+        leave_settings(&mut dev, &mut st, &cfg(), at(T0 + 600));
+        assert_eq!(dev.online_calls, vec![3]);
+        assert!(!st.pending_sync);
     }
 }

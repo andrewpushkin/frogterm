@@ -69,6 +69,7 @@ impl Nvs {
                 Some(2) => Some(false),
                 _ => None,
             },
+            pending_sync: nvs.get_u8("pending_sync")? == Some(1),
         };
         Ok((Nvs { nvs, last_ap }, state))
     }
@@ -82,6 +83,7 @@ impl Nvs {
         let _ = nvs.set_u8("current", s.current);
         let _ = nvs.set_u8("sync_failed", u8::from(s.sync_failed));
         let _ = nvs.set_u8("ready_beep", s.ready_beep.map_or(0, |ok| if ok { 1 } else { 2 }));
+        let _ = nvs.set_u8("pending_sync", u8::from(s.pending_sync));
         if let Some(t) = s.last_refresh {
             let _ = nvs.set_i64("refreshed", t);
         }

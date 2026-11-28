@@ -184,7 +184,7 @@ pub fn main(args: &[String]) -> Result<()> {
             let secs = match next {
                 Next::Wake(wake) => dev.wake(&mut state, wake),
                 Next::Settings(via) => match dev.settings(&mut state, via, &rx) {
-                    SettingsEnd::Sync => dev.wake(&mut state, Wake::Button(Press::Update)),
+                    SettingsEnd::Sync => dev.leave_settings(&mut state),
                     SettingsEnd::Failed(secs) => secs,
                     SettingsEnd::Closed => return,
                 },
@@ -277,6 +277,18 @@ impl Emulated {
     /// One wake with the shared logic; returns the seconds to sleep.
     fn wake(&mut self, state: &mut State, wake: Wake) -> u64 {
         println!();
+        self.with_rules(|dev, rules, r| app::run(dev, state, rules, wake, r))
+    }
+
+    /// After settings mode: the full sync with the new settings, once the
+    /// panel's rest is over.
+    fn leave_settings(&mut self, state: &mut State) -> u64 {
+        println!();
+        self.with_rules(|dev, rules, r| app::leave_settings(dev, state, rules, r))
+    }
+
+    /// `f` with the wake logic's settings and the readings now.
+    fn with_rules(&mut self, f: impl FnOnce(&mut Self, &app::Config, Readings) -> u64) -> u64 {
         let Ok(cfg) = self.settings_now() else {
             log::warn!("no usable settings: nothing to do until settings mode fixes them");
             return frogterm_core::schedule::when_time_unknown();
@@ -292,7 +304,7 @@ impl Emulated {
             panel_rest: self.panel_rest,
         };
         let readings = Readings { now: self.clock(), battery_mv: self.battery_mv, room_c: self.room_c };
-        app::run(self, state, &rules, wake, readings)
+        f(self, &rules, readings)
     }
 
     /// Settings mode up to the screen: the chirp, the page's server, the
@@ -678,7 +690,7 @@ const STATE_HEADER: &str = "frogterm-state v1";
 /// The device's NVS state as text (out/state.txt).
 fn state_to_text(s: &State) -> String {
     format!(
-        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\ncurrent {}\nsync_failed {}\nready_beep {}\n",
+        "{STATE_HEADER}\ntarget {}\nattempt {}\nstock {}\nseen {}\nrefreshed {}\ncurrent {}\nsync_failed {}\nready_beep {}\npending_sync {}\n",
         s.target,
         s.attempt,
         s.stock_count,
@@ -686,7 +698,8 @@ fn state_to_text(s: &State) -> String {
         s.last_refresh.map_or("-".into(), |t| t.to_string()),
         s.current,
         u8::from(s.sync_failed),
-        s.ready_beep.map_or("-", |ok| if ok { "ok" } else { "error" })
+        s.ready_beep.map_or("-", |ok| if ok { "ok" } else { "error" }),
+        u8::from(s.pending_sync)
     )
 }
 
@@ -707,6 +720,7 @@ fn state_from_text(text: &str) -> Option<State> {
             "current" => s.current = v.parse().ok()?,
             "sync_failed" => s.sync_failed = v == "1",
             "ready_beep" => s.ready_beep = if v == "-" { None } else { Some(v == "ok") },
+            "pending_sync" => s.pending_sync = v == "1",
             _ => {}
         }
     }
@@ -757,6 +771,7 @@ mod tests {
             current: 3,
             sync_failed: true,
             ready_beep: Some(false),
+            pending_sync: true,
         };
         assert_eq!(state_from_text(&state_to_text(&s)), Some(s));
         assert_eq!(state_from_text(&state_to_text(&State::default())), Some(State::default()));
