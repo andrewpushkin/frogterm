@@ -221,6 +221,12 @@ make send BUTTON=next               # a press now (the device is awake)
 make log SECS=120                   # the log, no reset
 ```
 
+To see an automatic update: flash a release number (`make flash FT_VERSION=98`
+while release 98 is the newest), push one more commit to `main`, wait for its
+release (`curl https://andrewpushkin.github.io/frogterm/version.txt`), then
+`make press BUTTON=green`: the log shows "release 99 is out … installing",
+the restart and "frogterm 99 woke by PowerOn".
+
 `make flash` checks `config.toml` with the device's rules first (a wrong
 value stops it). A device without settings (flashed with `NO_CONFIG=1`, or
 its settings broken) starts in settings mode on its own Wi-Fi.
