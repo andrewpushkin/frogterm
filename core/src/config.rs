@@ -196,6 +196,70 @@ impl Reader<'_> {
     }
 }
 
+/// `text` with `key` set to `value` (`None` removes it). The key's lines
+/// (all of a multi-line list) are replaced in place; a missing key goes
+/// right after its commented-out example (`# key = …`), else at the end.
+/// Every other line stays as it was.
+pub fn set(text: &str, key: &str, value: Option<&Value>) -> Result<String> {
+    let found = entries(text)?.into_iter().find(|e| e.key == key);
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(str::to_string).collect();
+    if let Some(last) = lines.last_mut().filter(|l| !l.ends_with('\n')) {
+        last.push('\n');
+    }
+    let new = value.map(|v| format!("{key} = {}\n", format_value(v)));
+    match (found, new) {
+        (Some(e), new) => {
+            lines.splice(e.lines, new);
+        }
+        (None, None) => return Ok(text.to_string()),
+        (None, Some(new)) => {
+            let example = |l: &String| {
+                l.trim_start()
+                    .strip_prefix('#')
+                    .map(str::trim_start)
+                    .and_then(|l| l.strip_prefix(key))
+                    .is_some_and(|l| l.trim_start().starts_with('='))
+            };
+            match lines.iter().position(example) {
+                Some(i) => lines.insert(i + 1, new),
+                None => lines.push(new),
+            }
+        }
+    }
+    Ok(lines.concat())
+}
+
+/// How `value` is written in the file.
+pub fn format_value(value: &Value) -> String {
+    match value {
+        Value::Str(s) => quote(s),
+        Value::Num(n) => n.clone(),
+        Value::List(items) => match items.as_slice() {
+            [] => "[]".to_string(),
+            [one] => format!("[{}]", quote(one)),
+            many => format!("[\n{}]", many.iter().map(|s| format!("  {},\n", quote(s))).collect::<String>()),
+        },
+    }
+}
+
+fn quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     /// Google Photos share link, e.g. `https://photos.app.goo.gl/XXXX`.
@@ -500,5 +564,70 @@ mod tests {
         assert!(format!("{e:#}").contains("photo_batch"), "{e:#}");
         assert!(Config::parse(&format!("{base}calendars = \"https://x\"\n")).is_err());
         assert!(Config::parse(&format!("{base}overlay_opacity = 3000\n")).is_err());
+    }
+
+    const FILE: &str = "# my frame\nalbum_url = \"https://photos.app.goo.gl/abc\" # the album\ncity = \"Tel Aviv\"\n\n# place_name = \"Home\"\n\ncalendars = [\n  # holidays\n  \"https://a/x.ics\",\n]\nphoto_batch = 5\n";
+
+    #[test]
+    fn set_replaces_in_place_and_keeps_comments() {
+        let out = set(FILE, "city", Some(&Value::Str("Haifa".into()))).unwrap();
+        assert_eq!(out, FILE.replace("city = \"Tel Aviv\"", "city = \"Haifa\""));
+        let out = set(FILE, "photo_batch", Some(&Value::Num("7".into()))).unwrap();
+        assert!(out.ends_with("photo_batch = 7\n"), "{out}");
+        assert!(out.starts_with("# my frame\nalbum_url = \"https://photos.app.goo.gl/abc\" # the album\n"));
+    }
+
+    #[test]
+    fn set_replaces_a_multi_line_list_as_one() {
+        let out = set(FILE, "calendars", Some(&Value::List(vec!["https://b/1.ics".into(), "https://c/2.ics".into()]))).unwrap();
+        assert!(!out.contains("holidays") && !out.contains("https://a/x.ics"), "{out}");
+        assert!(out.contains("calendars = [\n  \"https://b/1.ics\",\n  \"https://c/2.ics\",\n]\nphoto_batch = 5\n"), "{out}");
+        assert_eq!(Config::parse(&out).unwrap().calendars, ["https://b/1.ics", "https://c/2.ics"]);
+    }
+
+    #[test]
+    fn none_removes_the_key() {
+        let out = set(FILE, "calendars", None).unwrap();
+        assert!(!out.contains("calendars") && !out.contains("]\n"), "{out}");
+        assert!(out.ends_with("# place_name = \"Home\"\n\nphoto_batch = 5\n"), "{out}");
+        assert_eq!(set(FILE, "latitude", None).unwrap(), FILE, "not there: nothing to do");
+    }
+
+    #[test]
+    fn missing_key_goes_after_its_commented_example() {
+        let out = set(FILE, "place_name", Some(&Value::Str("Home".into()))).unwrap();
+        assert!(out.contains("# place_name = \"Home\"\nplace_name = \"Home\"\n"), "{out}");
+        let out = set(FILE, "timezone", Some(&Value::Str("UTC0".into()))).unwrap();
+        assert!(out.ends_with("photo_batch = 5\ntimezone = \"UTC0\"\n"), "{out}");
+        let out = set("city = \"x\"", "photo_batch", Some(&Value::Num("3".into()))).unwrap();
+        assert_eq!(out, "city = \"x\"\nphoto_batch = 3\n", "a file without a final newline");
+        assert_eq!(set("", "city", Some(&Value::Str("x".into()))).unwrap(), "city = \"x\"\n");
+    }
+
+    #[test]
+    fn written_text_parses_back() {
+        for s in ["תל אביב", "a \"quoted\" \\ back", "tab\there", "Шалом", ""] {
+            let out = set(FILE, "place_name", Some(&Value::Str(s.into()))).unwrap();
+            assert_eq!(Config::parse(&out).unwrap().place_name.as_deref(), Some(s), "{out}");
+        }
+        assert_eq!(format_value(&Value::List(vec![])), "[]");
+        assert_eq!(format_value(&Value::List(vec!["06:00".into()])), "[\"06:00\"]");
+    }
+
+    #[test]
+    fn a_broken_file_is_not_rewritten() {
+        assert!(set("city = \"x\n", "city", Some(&Value::Str("y".into()))).is_err());
+    }
+
+    #[test]
+    fn example_config_round_trips() {
+        let text = include_str!("../../config.example.toml");
+        let mut out = text.to_string();
+        for (k, v) in parse_flat(text).unwrap() {
+            out = set(&out, &k, Some(&v)).unwrap();
+        }
+        assert_eq!(Config::parse(&out).unwrap(), Config::parse(text).unwrap());
+        let comments = |t: &str| t.lines().filter(|l| l.trim_start().starts_with('#')).count();
+        assert_eq!(comments(&out), comments(text) - 1, "only the comment inside the calendars list goes (the list is rewritten)");
     }
 }
