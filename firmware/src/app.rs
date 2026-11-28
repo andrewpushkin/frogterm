@@ -10,8 +10,9 @@ use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use frogterm_core::album::{self, Photo};
-use frogterm_core::app::{self, Device, Led, Online, Readings, State};
+use frogterm_core::app::{self, Device, Led, Online, Readings, State, Wake};
 use frogterm_core::beep::Tone;
+use frogterm_core::buttons::Gesture;
 use frogterm_core::calendar::{self, DayEvent, IcsScanner};
 use frogterm_core::config::Config;
 use frogterm_core::framebuf::{FrameBuffer, Ink};
@@ -208,6 +209,16 @@ fn run_inner() -> Result<std::convert::Infallible> {
         crate::board::set_led(Led::Off);
         deep_sleep(CRASH_PAUSE_SECS, schedule::arm_button(button_held()));
     }
+    let wake = wake_cause();
+    // a button acts on release; held 10 s, green or right opens settings mode
+    let gesture = match wake {
+        Wake::Button(p) => Some(crate::sleep::gesture_after_wake(p)),
+        Wake::Timer | Wake::PowerOn => None,
+    };
+    log::info!("frogterm {} woke by {wake:?} ({gesture:?})", env!("CARGO_PKG_VERSION"));
+    if let Some(Gesture::Hold(p)) = gesture {
+        log::info!("{p:?} held: settings mode is not on the device yet, a press for now");
+    }
     let p = Peripherals::take()?;
     let sysloop = EspSystemEventLoop::take()?;
     let nvs_part = EspDefaultNvsPartition::take()?;
@@ -226,8 +237,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
         None
     });
     log::info!("room {room:?} (°C, %RH)");
-    let wake = wake_cause();
-    log::info!("frogterm {} woke by {wake:?}, RTC {rtc_now:?}", env!("CARGO_PKG_VERSION"));
+    log::info!("RTC {rtc_now:?}");
 
     // woke early: straight back to sleep, before powering anything up. At
     // the end of the panel's rest: LED off and the final beep (ready)
@@ -244,7 +254,7 @@ fn run_inner() -> Result<std::convert::Infallible> {
     crate::board::set_led(Led::On);
 
     let mut board = Board::new(p.pins.gpio21, p.pins.gpio16, p.pins.gpio14)?;
-    crate::sleep::spawn_press_listener();
+    let _gestures = crate::sleep::spawn_gesture_listener();
     // watchdog: never stay awake (battery) if anything hangs
     std::thread::spawn(|| {
         std::thread::sleep(WATCHDOG);

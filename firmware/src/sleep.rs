@@ -1,9 +1,13 @@
 //! Deep sleep with timer + button wake. The three top buttons (active low):
 //! green = update, the side buttons = browse the stored photos.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
+
 use esp_idf_svc::sys;
+use frogterm_core::app;
 pub use frogterm_core::app::Wake;
-use frogterm_core::buttons;
+use frogterm_core::buttons::{self, Gesture, Holds, Press};
 
 /// All buttons, in `buttons::ALL` order (green first).
 pub const BUTTON_GPIOS: [i32; 3] = [buttons::ALL[0].1 as i32, buttons::ALL[1].1 as i32, buttons::ALL[2].1 as i32];
@@ -47,21 +51,71 @@ pub fn button_held() -> bool {
     BUTTON_GPIOS.iter().any(|&g| is_down(g))
 }
 
-/// While the device is awake, every new press is handled as the shared rule
-/// says (`app::press_while_awake`, as in the emulator).
-pub fn spawn_press_listener() {
-    let spawned = std::thread::Builder::new().name("buttons".into()).stack_size(4096).spawn(|| {
-        let mut presses = buttons::NewPresses::new(BUTTON_GPIOS.map(is_down));
+fn levels() -> [bool; 3] {
+    BUTTON_GPIOS.map(is_down)
+}
+
+/// Milliseconds since boot.
+fn ms() -> u64 {
+    (unsafe { sys::esp_timer_get_time() } / 1000) as u64
+}
+
+/// What the button that woke the chip does: let go already or later, a
+/// press; green or right still down at 10 s, a hold (settings mode). Every
+/// button acts on release, so this waits for it.
+pub fn gesture_after_wake(p: Press) -> Gesture {
+    let Some(i) = buttons::ALL.iter().position(|(q, _)| *q == p) else { return Gesture::Press(p) };
+    let down = levels();
+    if !down[i] {
+        return Gesture::Press(p);
+    }
+    let start = ms();
+    let mut holds = Holds::new(down, start);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let now = ms();
+        match holds.poll(levels(), now) {
+            Some(g @ (Gesture::Press(q) | Gesture::Hold(q))) if q == p => return g,
+            _ => {}
+        }
+        // `Holds` ends every gesture by then; this only guards the loop
+        if now - start > buttons::STUCK_MS + 1000 {
+            return Gesture::Press(p);
+        }
+    }
+}
+
+/// Settings mode is on: green goes to the settings loop, not to the busy pips.
+static SETTINGS_MODE: AtomicBool = AtomicBool::new(false);
+
+#[allow(dead_code)] // settings mode (next step)
+pub fn set_settings_mode(on: bool) {
+    SETTINGS_MODE.store(on, Ordering::Relaxed);
+}
+
+/// While the device is awake: every gesture gets the busy pips
+/// (`app::press_while_awake`, as in the emulator), except in settings mode
+/// the one that ends it, which comes out of the returned receiver. A button
+/// still down now (the one that woke the device) counts from its next press.
+pub fn spawn_gesture_listener() -> Receiver<Gesture> {
+    let (tx, rx) = mpsc::channel();
+    let spawned = std::thread::Builder::new().name("buttons".into()).stack_size(4096).spawn(move || {
+        let mut holds = Holds::ignoring(levels());
         loop {
             std::thread::sleep(std::time::Duration::from_millis(20));
-            if let Some(p) = presses.poll(BUTTON_GPIOS.map(is_down)) {
-                crate::board::play(frogterm_core::app::press_while_awake(p));
+            let Some(g) = holds.poll(levels(), ms()) else { continue };
+            if SETTINGS_MODE.load(Ordering::Relaxed) && app::ends_settings(g) {
+                let _ = tx.send(g);
+            } else {
+                let (Gesture::Press(p) | Gesture::Hold(p)) = g;
+                crate::board::play(app::press_while_awake(p));
             }
         }
     });
     if let Err(e) = spawned {
         log::warn!("button listener: {e}");
     }
+    rx
 }
 
 /// Sleep `secs`; the buttons also wake the device if `arm_buttons`.
