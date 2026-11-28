@@ -240,15 +240,16 @@ version; choose `firmware.bin` of a [release](https://github.com/andrewpushkin/f
 (download it before joining `frogterm-setup`, which has no internet) and
 press **Install**. The device checks the file while it arrives (a whole
 ESP32-S3 frogterm firmware, not `firmware-full.bin`), writes it next to the
-running one, leaves settings mode and starts it; settings and stored photos
+running one, leaves settings mode and restarts with it at once; settings and stored photos
 stay. If the new firmware crashes or hangs before its first normal sleep,
 the device goes back to the previous one by itself at the next restart.
 
 **Automatic updates** (`auto_update`, on by default; a checkbox on the page):
 every sync also reads the release number on the [project site](https://andrewpushkin.github.io/frogterm/version.txt)
 (one small request) and, when a newer release is out, downloads its
-`firmware.bin` and installs it the same way; it starts at the next wake. A
-release that was rolled back is not installed again (the next one is). Only
+`firmware.bin` and installs it the same way, then restarts with it at once;
+the new firmware does that sync itself (a full one). A release that was
+rolled back is not installed again (the next one is). Only
 a release updates itself: a firmware built and flashed locally (version
 `dev`) never is replaced by one.
 

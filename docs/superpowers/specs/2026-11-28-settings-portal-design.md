@@ -180,7 +180,8 @@ first, the firmware follows.
   false, on by default; a checkbox on the page). Every sync reads
   `version.txt` on the GitHub Pages site and, if it names a higher release
   than the running one, installs that release's `firmware.bin` from the same
-  site (it starts at the next wake). My calls: the Pages site, not the GitHub
+  site, then restarts into it at once (owner); the new firmware does that
+  sync itself, as a full sync (after the panel's rest if one is running). My calls: the Pages site, not the GitHub
   API (no rate limit, the files of one CI run); only a release updates itself
   (a local "dev" build stays); a release that was installed and rolled back
   is not installed again.

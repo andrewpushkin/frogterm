@@ -185,12 +185,16 @@ impl Device for Reterminal<'_> {
         }
         log_heap("Wi-Fi up");
         let stored_list = preload.and_then(|h| h.join().ok()).flatten();
+        // a newer release first: installed, it restarts at once and does this
+        // sync itself (a full one), so nothing downloaded here is thrown away
+        if cfg.auto_update && crate::ota::auto_update(&mut net, &self.nvs.nvs) {
+            let _ = self.nvs.nvs.set_u8("pending_sync", 1);
+            net.stop();
+            crate::ota::restart();
+        }
         // the RTC keeps good time; wait for NTP only if it lost power
         let now = now.or_else(|| net.synced_time(Duration::from_secs(15))).ok_or_else(|| anyhow!("time unknown"))?;
         let fetched = online(cfg, &mut net, now, batch, stored_list)?;
-        if cfg.auto_update {
-            crate::ota::auto_update(&mut net, &self.nvs.nvs);
-        }
         // every Wi-Fi session corrects the RTC from NTP (usually already
         // done during the downloads, so this rarely waits)
         match net.synced_time(Duration::from_secs(10)) {
@@ -366,22 +370,21 @@ fn settings_mode(dev: &mut Reterminal, state: &mut State, via: Via, gestures: &R
             continue;
         }
         if installed {
-            // let the browser get its answer, then boot the new firmware
+            // let the browser get its answer, then start the new firmware at
+            // once; with usable settings it syncs (after the panel's rest)
             std::thread::sleep(Duration::from_secs(2));
+            if let Some(cfg) = crate::settings::load(&dev.nvs.nvs) {
+                with_rules(&cfg, |rules| app::end_settings(dev, state, rules, dev.now()));
+            }
+            crate::sleep::set_settings_mode(false);
+            portal.close();
+            crate::ota::restart();
         }
         if idle {
             log::info!("nobody opened the settings page for {} min", app::SETTINGS_IDLE_SECS / 60);
         }
         match crate::settings::load(&dev.nvs.nvs) {
             Some(cfg) => break with_rules(&cfg, |rules| app::end_settings(dev, state, rules, dev.now())),
-            // a new firmware without usable settings: it starts in settings mode
-            None if installed => {
-                crate::sleep::set_settings_mode(false);
-                portal.close();
-                log::info!("restarting into the new firmware");
-                // SAFETY: plain ESP-IDF restart
-                unsafe { esp_idf_svc::sys::esp_restart() }
-            }
             // still unusable: green stays in settings mode; left alone, the
             // device sleeps (battery) until a button opens it again
             None if pressed => dev.beep(beep::ERROR),

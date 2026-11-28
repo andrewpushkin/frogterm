@@ -144,13 +144,27 @@ pub fn install(len: usize, read: &mut dyn FnMut(&mut [u8]) -> Result<usize>, pro
 }
 
 /// At a sync (`auto_update` on): installs the newest release if it is newer
-/// than this firmware; it starts at the next wake. Never fails the sync.
-pub fn auto_update(net: &mut Net, nvs: &EspNvs<NvsDefault>) {
+/// than this firmware. True if one was installed (the caller restarts into
+/// it at once); a failed check never fails the sync.
+pub fn auto_update(net: &mut Net, nvs: &EspNvs<NvsDefault>) -> bool {
     match update_from_site(net, nvs) {
-        Ok(Some(v)) => log::info!("firmware {v} installed, it starts at the next wake"),
-        Ok(None) => {}
-        Err(e) => log::warn!("firmware update check: {e:#}"),
+        Ok(Some(v)) => {
+            log::info!("firmware {v} installed");
+            true
+        }
+        Ok(None) => false,
+        Err(e) => {
+            log::warn!("firmware update check: {e:#}");
+            false
+        }
     }
+}
+
+/// Starts the firmware that was just installed.
+pub fn restart() -> ! {
+    log::info!("restarting into the new firmware");
+    // SAFETY: plain ESP-IDF restart
+    unsafe { sys::esp_restart() }
 }
 
 fn update_from_site(net: &mut Net, nvs: &EspNvs<NvsDefault>) -> Result<Option<String>> {
