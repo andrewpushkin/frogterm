@@ -510,7 +510,7 @@ pub fn compose(
     let (events, tomorrow) = info.events_for(today);
     let agenda = calendar::agenda(events, tomorrow, now_hm);
     draw_weather_box(&mut fb, info.forecast.as_ref().and_then(|f| f.window(now)), backdrop);
-    // humidity and wind of the third column (+4 h), in a tab on the box
+    // unusual humidity or strong wind at the third column (+4 h), in a tab on the box
     if let Some(ahead) = info.forecast.as_ref().and_then(|f| f.window(now)).and_then(|mut w| w.nth(2)) {
         draw_weather_tab(&mut fb, ahead);
     }

@@ -108,11 +108,21 @@ pub enum Detail {
     Wind(String),
 }
 
-/// The tab's values, unknown ones left out (no precipitation: the box's
-/// columns show it already).
+/// From this wind speed on (Beaufort 5, "fresh breeze") the wind is shown.
+pub const WIND_STRONG_KMH: f32 = 30.0;
+/// Humidity at or below this is shown (dry air).
+pub const HUMIDITY_LOW_PCT: u8 = 30;
+/// Humidity at or above this is shown (muggy air).
+pub const HUMIDITY_HIGH_PCT: u8 = 80;
+
+/// The tab's values, only those out of the ordinary: strong wind, low or
+/// high humidity (no precipitation: the box's columns show it already).
 pub fn details(slot: &HourSlot) -> Vec<Detail> {
-    let humidity = slot.humidity_pct.map(|h| Detail::Humidity(format!("{h}%")));
-    let wind = slot.wind_kmh.map(|w| Detail::Wind(format!("{} km/h", w.round() as i32)));
+    let humidity = slot
+        .humidity_pct
+        .filter(|&h| h <= HUMIDITY_LOW_PCT || h >= HUMIDITY_HIGH_PCT)
+        .map(|h| Detail::Humidity(format!("{h}%")));
+    let wind = slot.wind_kmh.filter(|&w| w >= WIND_STRONG_KMH).map(|w| Detail::Wind(format!("{} km/h", w.round() as i32)));
     humidity.into_iter().chain(wind).collect()
 }
 
@@ -748,9 +758,21 @@ mod tests {
     fn tab_shows_humidity_and_wind_not_precipitation() {
         let h = |s: &str| Detail::Humidity(s.into());
         let w = |s: &str| Detail::Wind(s.into());
-        assert_eq!(details(&ahead(Some(61), Some(11.4))), [h("61%"), w("11 km/h")]);
-        assert_eq!(details(&ahead(None, Some(6.5))), [w("7 km/h")], "unknown values are left out");
+        assert_eq!(details(&ahead(Some(85), Some(41.4))), [h("85%"), w("41 km/h")]);
+        assert_eq!(details(&ahead(None, Some(30.0))), [w("30 km/h")], "unknown values are left out");
         assert_eq!(details(&ahead(None, None)), []);
+    }
+
+    #[test]
+    fn tab_shows_only_unusual_values() {
+        let h = |s: &str| Detail::Humidity(s.into());
+        let w = |s: &str| Detail::Wind(s.into());
+        assert_eq!(details(&ahead(Some(61), Some(11.0))), [], "usual humidity, light wind: no tab");
+        assert_eq!(details(&ahead(Some(79), Some(29.9))), []);
+        assert_eq!(details(&ahead(Some(31), Some(0.0))), []);
+        assert_eq!(details(&ahead(Some(30), Some(12.0))), [h("30%")], "dry");
+        assert_eq!(details(&ahead(Some(80), Some(12.0))), [h("80%")], "muggy");
+        assert_eq!(details(&ahead(Some(50), Some(35.0))), [w("35 km/h")], "windy");
     }
 
     #[test]
@@ -759,7 +781,7 @@ mod tests {
         let r = weather_tab_rect(&wide).unwrap();
         assert_eq!(r.bottom_right().unwrap().x, b.bottom_right().unwrap().x, "right edges line up");
         assert_eq!(r.top_left.y + r.size.height as i32, b.top_left.y + TAB_OVERLAP, "on the box's top border");
-        let narrow = weather_tab_rect(&details(&ahead(Some(5), None))).unwrap();
+        let narrow = weather_tab_rect(&details(&ahead(Some(95), None))).unwrap();
         assert!(narrow.size.width < r.size.width, "sized to what it shows");
         assert_eq!(weather_tab_rect(&[]), None);
         let mut fb = FrameBuffer::new(Ink::Green);
