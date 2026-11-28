@@ -70,6 +70,12 @@ pub fn handle(method: &str, path: &str, body: &[u8], config_text: &str, wifi_nee
     }
 }
 
+/// The answer when a good save could not be stored (e.g. no space left):
+/// the form as sent, with the reason; nothing was saved.
+pub fn store_failed(new_text: &str, why: &str) -> Response {
+    page(new_text, Message::Error(format!("Not saved: the device could not store the settings ({why}). Try again.")))
+}
+
 enum Message {
     None,
     Ok(String),
@@ -386,6 +392,15 @@ mod tests {
         assert!(saved.is_none() && r.body.contains("Not saved") && r.body.contains("wifi_ssid"), "{}", r.body);
         assert!(handle("POST", "/save", &form(&f), FILE, false).1.is_some(), "the emulator does without");
         assert!(handle("POST", "/save", &form(&unchanged()), FILE, true).1.is_some());
+    }
+
+    #[test]
+    fn a_save_the_device_could_not_store_says_so_and_keeps_the_form() {
+        let (_, saved) = save(&unchanged().into_iter().map(|(k, v)| (k, if k == "city" { "Haifa" } else { v })).collect::<Vec<_>>());
+        let r = store_failed(&saved.unwrap(), "no space");
+        assert!(r.body.contains("Not saved") && r.body.contains("no space") && !r.body.contains("Saved —"), "{}", r.body);
+        assert!(r.body.contains("value=\"Haifa\""), "the form keeps what was typed");
+        assert!(!r.body.contains("PASSWORD1") && !r.body.contains("SECRET1"));
     }
 
     #[test]
