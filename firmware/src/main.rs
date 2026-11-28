@@ -7,6 +7,7 @@ mod net;
 mod ota;
 mod portal;
 mod rtc;
+mod serial;
 mod settings;
 mod sleep;
 mod store;

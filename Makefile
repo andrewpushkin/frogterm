@@ -32,7 +32,7 @@ IMAGE_ARGS   := --chip esp32s3 --flash-size 32mb --partition-table firmware/part
 USBIPD       ?= $(shell command -v usbipd.exe 2>/dev/null || echo "/mnt/c/Program Files/usbipd-win/usbipd.exe")
 USBIPD_BUSID ?=
 
-.PHONY: all firmware flash monitor image tests emulator pc-check clean help
+.PHONY: all firmware flash monitor press send log image tests emulator pc-check clean help
 
 all: firmware
 
@@ -77,6 +77,15 @@ flash: image
 monitor:
 	@$(FIND_PORT); $(DOCKER_DEV) espflash monitor --chip esp32s3 --port $$port --elf $(ELF)
 
+# Testing over the serial port (tools/serial.py): BUTTON=green|next|previous|
+# "hold green"|"hold next"; SECS: how long to show the log.
+# press: reset the chip and press BUTTON as the waking button, show the log until it sleeps
+# send:  press BUTTON now (the device must be awake); log: the log, no reset
+press send:
+	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/serial.py --port $$port $@ "$(BUTTON)" $(if $(SECS),--secs $(SECS))
+log:
+	@$(FIND_PORT); $(DOCKER_DEV) python3 tools/serial.py --port $$port log $(if $(SECS),--secs $(SECS))
+
 # Rebuild the image only when the Dockerfile changes (stamp file in build/).
 image: build/.image-stamp
 
@@ -108,6 +117,8 @@ help:
 	@echo "                copies $(CONFIG) into the device's settings [NO_CONFIG=1: keep the device's]"
 	@echo "                hold green 10 s on the device: settings page on its Wi-Fi frogterm-setup"
 	@echo "make monitor    serial log of the reTerminal"
+	@echo "make press      BUTTON=green|next|previous|'hold green'|'hold next': reset + that button, then the log"
+	@echo "make send       BUTTON=...: that button now (device awake); make log [SECS=60]: the log"
 	@echo "make tests      run all unit tests"
 	@echo "make emulator   the device in a window: click its 3 buttons (flash in out/)"
 	@echo "                [ARGS=--no-rest] no panel rest between refreshes"

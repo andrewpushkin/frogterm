@@ -51,8 +51,10 @@ pub fn button_held() -> bool {
     BUTTON_GPIOS.iter().any(|&g| is_down(g))
 }
 
+/// The buttons down now: pressed, or held by a serial command (testing).
 fn levels() -> [bool; 3] {
-    BUTTON_GPIOS.map(is_down)
+    let (real, typed) = (BUTTON_GPIOS.map(is_down), crate::serial::simulated());
+    [real[0] || typed[0], real[1] || typed[1], real[2] || typed[2]]
 }
 
 /// Milliseconds since boot.

@@ -229,12 +229,19 @@ fn run_inner() -> Result<std::convert::Infallible> {
         crate::board::set_led(Led::Off);
         deep_sleep(CRASH_PAUSE_SECS, schedule::arm_button(button_held()));
     }
-    let wake = wake_cause();
+    let mut wake = wake_cause();
+    // serial commands (testing); after a power-on (a reset), one typed at
+    // once is the button that woke the device
+    let typed = crate::serial::start(wake == Wake::PowerOn);
     // a button acts on release; held 10 s, green or right opens settings mode
     let gesture = match wake {
         Wake::Button(p) => Some(crate::sleep::gesture_after_wake(p)),
-        Wake::Timer | Wake::PowerOn => None,
+        Wake::PowerOn => crate::serial::first_command(typed),
+        Wake::Timer => None,
     };
+    if let (Wake::PowerOn, Some(Gesture::Press(p) | Gesture::Hold(p))) = (wake, gesture) {
+        wake = Wake::Button(p);
+    }
     log::info!("frogterm {} woke by {wake:?} ({gesture:?})", crate::ota::version());
     crate::ota::log_rollback();
     let p = Peripherals::take()?;

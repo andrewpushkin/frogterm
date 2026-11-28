@@ -205,6 +205,22 @@ make monitor                      # serial log (Ctrl+C to quit)
 make flash FEATURES=bars          # test build: six colour bars only
 ```
 
+### Testing over the serial port
+
+The firmware takes button presses typed on its serial console (UART0, the
+USB-C port): `green`, `next`, `previous` (`right`, `left`), `hold green`,
+`hold next`, and `version`. While the device is awake a command acts as the
+real button. In deep sleep the chip hears nothing, so the tool resets it
+and types the command in the first 3 s after the start, where it counts as
+the button that woke the device:
+
+```sh
+make press BUTTON=green             # reset, a green press, the log until it sleeps
+make press BUTTON="hold green"      # settings mode (own Wi-Fi)
+make send BUTTON=next               # a press now (the device is awake)
+make log SECS=120                   # the log, no reset
+```
+
 `make flash` checks `config.toml` with the device's rules first (a wrong
 value stops it). A device without settings (flashed with `NO_CONFIG=1`, or
 its settings broken) starts in settings mode on its own Wi-Fi.
