@@ -6,7 +6,7 @@
 # link, calendar links, Wi-Fi password). The emulator reads it when it runs and
 # its settings page (hold green 10 s) rewrites it, keeping these comments. The
 # device keeps its own copy, edited with the same page in its settings mode;
-# `make flash FEATURES=seed-config` gives an empty device this file.
+# `make flash` copies this file into the device (replacing its settings).
 # README.md, section "Where to get your real data", explains every value.
 
 # --- Photos -------------------------------------------------------------------

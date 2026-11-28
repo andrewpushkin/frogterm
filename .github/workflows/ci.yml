@@ -96,7 +96,7 @@ jobs:
             build/target
           key: firmware-${{ hashFiles('Dockerfile') }}-${{ hashFiles('firmware/Cargo.lock', 'firmware/sdkconfig.defaults') }}
           restore-keys: firmware-${{ hashFiles('Dockerfile') }}-
-      - name: Example config (the seed-config build checks it)
+      - name: Example config (the copy-config build checks it)
         run: cp config.example.toml config.toml
       - name: Firmware fmt and clippy
         run: |

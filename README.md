@@ -59,10 +59,12 @@ cp config.example.toml config.toml
 the PC. The emulator reads it when it runs, and its **settings page** edits
 it (see below). The device keeps its own copy of the same settings (in its
 NVS flash) and edits it with the same page in its **settings mode** (see
-"Using it"); nothing is built into the firmware, so changing a setting needs
-no flashing. To start a device with your `config.toml` instead of typing it
-into the page, flash once with `make flash FEATURES=seed-config`: an empty
-device takes it as its settings (a device that has settings keeps them).
+"Using it"), so changing a setting needs no flashing. **`make flash` copies
+`config.toml` into the device**: its first wake after flashing replaces the
+device's settings with the file. Changes made on the device's page after
+that stay until the next `make flash` — put them into `config.toml` too, or
+flash with `NO_CONFIG=1` to keep the device's settings. `build/frogterm.bin`
+(`make`) never contains your settings.
 
 ## Where to get your real data
 
@@ -173,14 +175,15 @@ Then in WSL:
 
 ```sh
 make                              # firmware -> build/frogterm.bin
-make flash USBIPD_BUSID=2-3       # attaches the USB port to WSL and flashes
+make flash USBIPD_BUSID=2-3       # attaches the USB port to WSL and flashes, with config.toml
+make flash NO_CONFIG=1            # flashes, the device keeps its own settings
 make monitor                      # serial log (Ctrl+C to quit)
-make flash FEATURES=seed-config   # an empty device starts with config.toml
 make flash FEATURES=bars          # test build: six colour bars only
 ```
 
-Flashing keeps the device's settings. A device without settings (the first
-flash) starts in settings mode on its own Wi-Fi.
+`make flash` checks `config.toml` with the device's rules first (a wrong
+value stops it). A device without settings (flashed with `NO_CONFIG=1`, or
+its settings broken) starts in settings mode on its own Wi-Fi.
 
 ## Using it
 

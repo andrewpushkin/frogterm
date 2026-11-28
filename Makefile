@@ -29,10 +29,10 @@ USBIPD_BUSID ?=
 
 all: firmware
 
-# Firmware for the reTerminal -> build/frogterm.bin. Its settings live in the
-# device (the settings page); FEATURES=seed-config gives an empty device config.toml.
+# Firmware for the reTerminal -> build/frogterm.bin, without settings (the
+# device keeps its own; no secrets in the file).
 firmware: image
-	$(DOCKER) sh -c 'cd firmware && cargo build --release $(if $(FEATURES),--features $(FEATURES))'
+	$(DOCKER) sh -c 'cd firmware && cargo build --release $(if $(FEATURES),--features "$(FEATURES)")'
 	$(DOCKER) espflash save-image --chip esp32s3 --flash-size 32mb --partition-table firmware/partitions.csv $(ELF) build/frogterm.bin
 	@ls -l build/frogterm.bin
 
@@ -54,7 +54,13 @@ DOCKER_DEV = docker run --rm -i $(TTY) --init -v "$(CURDIR)":/work -w /work \
 	-u $(shell id -u):$(shell id -g) -e HOME=/tmp \
 	--device $$port --group-add $$(stat -c %g $$port) $(IMAGE)
 
-flash: firmware
+# Flashing copies $(CONFIG) into the device's settings (at its first wake;
+# the settings page edits them afterwards). NO_CONFIG=1 keeps the device's own.
+FLASH_FEATURES = $(strip $(if $(NO_CONFIG),,copy-config) $(FEATURES))
+
+flash: image
+	@[ -n "$(NO_CONFIG)" ] || [ -f "$(CONFIG)" ] || { echo "$(CONFIG) not found: cp config.example.toml config.toml and edit it (or NO_CONFIG=1 to keep the device's settings)"; exit 2; }
+	$(DOCKER) sh -c 'cd firmware && FT_CONFIG="/work/$(CONFIG)" FT_FLASH_ID="$$(date +%s)" cargo build --release $(if $(FLASH_FEATURES),--features "$(FLASH_FEATURES)")'
 	@$(FIND_PORT); echo "flashing via $$port"; \
 	$(DOCKER_DEV) espflash flash --chip esp32s3 --flash-size 32mb \
 		--partition-table firmware/partitions.csv --port $$port $(ELF)
@@ -89,7 +95,8 @@ clean:
 
 help:
 	@echo "make            build the firmware -> build/frogterm.bin (in Docker)"
-	@echo "make flash      flash the reTerminal [USBIPD_BUSID=<id>] [PORT=/dev/ttyACM0] [FEATURES=seed-config|bars]"
+	@echo "make flash      flash the reTerminal [USBIPD_BUSID=<id>] [PORT=/dev/ttyACM0] [FEATURES=bars]"
+	@echo "                copies $(CONFIG) into the device's settings [NO_CONFIG=1: keep the device's]"
 	@echo "                hold green 10 s on the device: settings page on its Wi-Fi frogterm-setup"
 	@echo "make monitor    serial log of the reTerminal"
 	@echo "make tests      run all unit tests"
