@@ -3,8 +3,10 @@
 #   cp config.example.toml config.toml     # then put your real values in config.toml
 #
 # config.toml is gitignored: it is the ONLY place for your private data (album
-# link, calendar links, Wi-Fi password). The firmware has it baked in at build
-# time, so after changing it run `make flash` again.
+# link, calendar links, Wi-Fi password). The emulator reads it when it runs and
+# its settings page (hold green 10 s) rewrites it, keeping these comments. The
+# firmware has it baked in at build time, so after changing it run `make flash`
+# again.
 # README.md, section "Where to get your real data", explains every value.
 
 # --- Photos -------------------------------------------------------------------

@@ -56,7 +56,9 @@ cp config.example.toml config.toml
 ```
 
 `config.toml` is gitignored and is the **only** place for private data. The
-firmware has it baked in, so after changing it, flash again.
+emulator reads it when it runs, and its **settings page** edits it (see
+below). The firmware still has it baked in for now, so after changing it,
+flash again.
 
 ## Where to get your real data
 
@@ -121,6 +123,7 @@ make emulator     # the device in a window, with its three buttons to click
 make emulator ARGS="--room 22 --battery 90 --seed 3"   # preview the header, fixed photos
 make emulator ARGS=--no-rest       # no e-paper rest between refreshes
 make emulator ARGS="--once next"   # no window: one wake (green|next|previous) -> out/screen.png, out/window.png
+make emulator ARGS="--once hold-green"   # no window: the settings screen
 make pc-check     # the Google album works without a login?
 make tests        # all unit tests
 ```
@@ -133,6 +136,17 @@ photos, batches, the panel's rest between refreshes, the scheduled timer wakes.
 a factory-fresh device. The window shows the green LED (as on the device), a
 countdown to the next timer wake and the last log line; a new image fades in
 over 20 s, as long as the real panel takes; the full log is in the terminal.
+
+**Buttons act when you let go**, as on the device. **Hold green 10 s** (mouse
+or Space) for settings mode as the device's own Wi-Fi network, **hold right
+10 s** for settings mode on this PC's network: the panel shows the network
+and the page's address (`http://localhost:8080/`, the next free port if
+taken). The page has every setting of `config.toml`; Save checks them and
+rewrites the file, keeping its comments (the Wi-Fi password and secret
+calendar links are never shown: left as they are, they stay). **Press green**
+to finish: the emulator reads the file again and syncs. Nobody on the page
+for 15 min also finishes. Without a usable `config.toml` (none yet, empty, or
+wrong) the emulator starts in settings mode.
 
 In WSL the window appears through WSLg. On Windows itself (no Docker), with
 [Rust](https://rustup.rs) installed:
@@ -161,6 +175,10 @@ make flash FEATURES=bars          # test build: six colour bars only
 ```
 
 ## Using it
+
+Every button acts **when it is let go**. The one thing that happens while a
+button is down: holding green or right for 10 s opens settings mode (in the
+emulator for now; see "Try it on the PC first").
 
 | Sound | Meaning |
 |---|---|
