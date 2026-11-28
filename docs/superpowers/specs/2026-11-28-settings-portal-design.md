@@ -44,7 +44,8 @@ first, the firmware follows.
 
 ## Non-goals
 
-- No OTA firmware update from the page.
+- ~~No OTA firmware update from the page.~~ Added later (owner): see
+  "Firmware update from the page" below.
 - No accounts or login on the page.
 - No captive-portal pop-up tricks (DNS hijack) in the first version — the
   address on the screen is typed in by hand.
@@ -104,7 +105,7 @@ first, the firmware follows.
   `Config::parse`; on error the page comes back with the message and nothing
   is saved; on success the file is written and the page says "Saved — press
   the green button to finish".
-- Plain HTML + a little CSS, no JavaScript needed, no external resources (the
+- Plain HTML + a little CSS, no external resources (the
   access point has no internet). Embedded in the binary from `core/`.
 
 ### The file
@@ -150,3 +151,30 @@ first, the firmware follows.
   existing fonts.
 - Whether the firmware's first step keeps a build-time `config.toml` as a
   seed for an empty NVS (handy for the owner's own device) — off by default.
+
+## Firmware update from the page (added 2026-11-28, owner)
+
+- The settings page gets a **Firmware** box: the running version, a file
+  picker for a release's `firmware.bin` and Install. A few lines of
+  JavaScript send the file as the request body (`POST /update`) and show the
+  upload's progress; the settings form stays plain HTML.
+- The device writes it to a **second app slot** while it keeps running,
+  refuses anything that is not a whole ESP32-S3 app image with frogterm's
+  version tag (e.g. `firmware-full.bin`, another project's firmware, a cut-off
+  upload), then leaves settings mode and boots it. Settings, stored photos
+  and weather stay.
+- **Rollback** (owner approved): a new firmware that crashes or hangs before
+  its first normal deep sleep is thrown out at the next restart and the
+  previous one boots again. Needs the bootloader built with the firmware
+  (rollback on) instead of espflash's own.
+- **Flash layout** (owner: keep the pictures where they are, the flash has
+  room): `otadata` + `ota_0` + `ota_1` (3 MB each) in the unused space after
+  `screens`; `factory`, `photos`, `screens`, NVS unchanged. One USB flash
+  brings the new layout and bootloader; after it, updates come from the page.
+  A device on the old layout says so on the page instead of updating.
+- USB flashing (`make flash`, the browser installer) erases `otadata`, so the
+  firmware just flashed is the one that runs.
+- The emulator shows the same box and checks an uploaded file the same way,
+  but installs nothing.
+- Not now: an "update to the latest release" button (the device downloading
+  from GitHub itself).
